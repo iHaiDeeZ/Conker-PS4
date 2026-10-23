@@ -23,7 +23,7 @@ STAGE="$PS4_BUILD_ROOT/build/conker-stage"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/sce_sys"
 cp "$EBOOT" "$STAGE/eboot.bin"
-python3 "$HERE/make-art.py" "$SRC/host/assets/thumbnail.png" "$STAGE/sce_sys"
+python3 "$HERE/make-art.py" "$HERE/../assets" "$STAGE/sce_sys"
 echo "$VERSION" > "$STAGE/version.txt"
 # RecompFrontend's fonts, icons, style sheet and controller mappings (/app0/assets)
 cp -r "$SRC/host/assets" "$STAGE/assets"

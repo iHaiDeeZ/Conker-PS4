@@ -30,7 +30,7 @@ index 478a9a0..263bd4d 100644
  
      // fps_counter.cpp: Show FPS, the frame rate counter.
 diff --git a/host/src/frontend.cpp b/host/src/frontend.cpp
-index 58a7262..486de5c 100644
+index 58a7262..14ddfa8 100644
 --- a/host/src/frontend.cpp
 +++ b/host/src/frontend.cpp
 @@ -20,6 +20,10 @@
@@ -102,7 +102,7 @@ index 58a7262..486de5c 100644
          conker::reticle::update();
          std::string title;
          {
-@@ -313,6 +339,14 @@ namespace {
+@@ -313,6 +339,17 @@ namespace {
      // The launcher's options: RecompFrontend's usual ones, with Version and Add ROM after Start Game.
      void init_launcher(recompui::LauncherMenu* menu) {
          const recomp::GameEntry& game = supported_games[0];
@@ -111,13 +111,16 @@ index 58a7262..486de5c 100644
 +        // straight away (no Load ROM on a console).
 +        if (!recomp::is_rom_valid(game.game_id)) {
 +            const recomp::RomValidationError bundled = recomp::select_rom("/app0/game/conker.z64", game.game_id);
++            // select_rom only stores it: the list of valid ROMs is made at startup, and the launcher's
++            // Start Game asks it (v00.03 showed Load ROM until the next start)
++            recomp::check_all_stored_roms();
 +            std::printf("[frontend] the package's ROM: %s\n", bundled == recomp::RomValidationError::Good ? "stored" : conker::rom_error_text(bundled));
 +        }
 +#endif
          // Here rather than at startup, so a ROM given with --rom is already the one stored.
          conker::roms::init(recomp::get_config_path() / game.stored_filename());
          recompui::GameOptionsMenu* options = menu->init_game_options_menu(
-@@ -331,8 +365,11 @@ namespace {
+@@ -331,8 +368,11 @@ namespace {
          conker::local_achievements::init();
          conker::reticle::on_ui_ready();
          options->add_start_game_or_load_rom_option();

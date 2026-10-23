@@ -25,6 +25,9 @@ struct PathSet {
 
 std::vector<std::filesystem::path> search_folders() {
     std::vector<std::filesystem::path> folders;
+    // the package's own ROM first (/data/Conker holds the runtime's stored copy, which isn't a ROM file
+    // as dumped: Load ROM on it said "not a valid ROM", v00.03)
+    folders.push_back("/app0/game");
     const std::filesystem::path data = ps4_data_dir();
     folders.push_back(data);
     folders.push_back(data / "install");
