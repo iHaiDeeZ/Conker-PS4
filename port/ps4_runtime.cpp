@@ -695,6 +695,12 @@ extern "C" void ps4_boot_trace(const char* stage);
 extern "C" void ps4_watch_thread(const char* name);  // port/ps4_sampler.cpp
 extern "C" void ps4_install_signal_stack();        // port/ps4_crashlog.cpp
 
+// This thread's outermost frame of app code (startOnAppCores'): unwinding past it steps into the
+// system library that started the thread, which the eboot's unwind tables don't cover; libunwind then
+// searched all 1.9 MB of .eh_frame on every backtrace (Conker v00.07: the save states' wait signatures,
+// taken at every game thread wait, held the game at ~0.4 fps).
+extern "C" __thread uintptr_t ps4_thread_frame_top = 0;
+
 namespace {
 constexpr uint64_t kAppCores = 0x7F;
 // Every thread gets at least this much stack. The system's default is far smaller than a PC's
@@ -711,6 +717,8 @@ struct ThreadStart {
 };
 
 void* startOnAppCores(void* raw) {
+    // where a backtrace of this thread ends (ps4_backtrace, Conker's ps4_platform.cpp)
+    ps4_thread_frame_top = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
     const ThreadStart start = *static_cast<ThreadStart*>(raw);
     free(raw);
     reinterpret_cast<SetAffinityFn>(&scePthreadSetaffinity)(scePthreadSelf(), kAppCores);

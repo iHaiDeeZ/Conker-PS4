@@ -160,20 +160,29 @@ extern "C" void ps4_thread_role(int role) {
 // The crash log's app part (port/ps4_crashlog.cpp; create-fself needs it defined).
 extern "C" void ps4_crash_guest_info() {}
 
-// backtrace() for the runtime's save states (where each game thread waits): the PS4's C library has
-// no execinfo, so through the unwinder.
+// backtrace() for the runtime's save states (where each game thread waits, at every wait): the PS4's C
+// library has no execinfo, so through the unwinder. It stops at the thread's outermost app frame
+// (port/ps4_runtime.cpp: ps4_thread_frame_top): one step further is system code without unwind
+// tables in the eboot, and libunwind looks for those by reading all of .eh_frame, uncached, every
+// time (v00.07: the game ran at ~0.4 fps inside it).
+extern "C" __thread uintptr_t ps4_thread_frame_top;
+
 extern "C" int ps4_backtrace(void **frames, int max) {
     struct Walk {
         void **frames;
         int max;
         int count;
-    } walk{ frames, max, 0 };
+        uintptr_t top;
+    } walk{ frames, max, 0, ps4_thread_frame_top };
     _Unwind_Backtrace(
         [](_Unwind_Context *context, void *arg) -> _Unwind_Reason_Code {
             Walk &w = *static_cast<Walk *>(arg);
             if (w.count >= w.max)
                 return _URC_END_OF_STACK;
             w.frames[w.count++] = reinterpret_cast<void *>(_Unwind_GetIP(context));
+            // the frame that started the thread (or one tail-called from it): its caller is the system's
+            if (w.top != 0 && _Unwind_GetCFA(context) > w.top)
+                return _URC_END_OF_STACK;
             return _URC_NO_REASON;
         },
         &walk);

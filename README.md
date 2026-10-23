@@ -5,9 +5,10 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.07 on the PS4 at 192.168.0.90, not yet tested there**. v00.06 still ran the game at
-~0.4 fps with RT64 idle (2 ms a frame) and one CPU core busy: v00.07 adds the hot-spot profiler to
-find that thread's code.
+Status: **v00.08 on the PS4 at 192.168.0.90, not yet tested there**. v00.07's profile found the
+slowness: the save states' wait signature (a native backtrace at every game thread wait) stepped past
+the thread's first frame into system code, and libunwind then searched all 1.9 MB of `.eh_frame` each
+time. v00.08 stops the backtrace at the thread's start frame (`ps4_thread_frame_top`).
 
 ## Using it
 
