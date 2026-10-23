@@ -6,7 +6,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <mutex>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <sys/stat.h>
@@ -50,6 +53,107 @@ extern "C" void ps4_platform_init(void) {
         std::fclose(file);
     }
     LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4 v{}, data in {}", version, ps4_data_dir());
+    ps4_perf_set_enabled(ps4_setting_get("perf_log", 1));
+}
+
+// ---- the port's settings: /data/Conker/ps4.ini, "key=number" lines, read once and rewritten whole
+namespace {
+std::mutex settings_mutex;
+bool settings_loaded = false;
+std::vector<std::pair<std::string, int>> settings;
+
+std::string settings_path() {
+    return std::string(ps4_data_dir()) + "/ps4.ini";
+}
+
+void load_settings() {
+    if (settings_loaded)
+        return;
+    settings_loaded = true;
+    FILE *file = std::fopen(settings_path().c_str(), "r");
+    if (!file)
+        return;
+    char line[128];
+    while (std::fgets(line, sizeof(line), file)) {
+        char *equals = std::strchr(line, '=');
+        if (!equals)
+            continue;
+        *equals = '\0';
+        settings.emplace_back(line, std::atoi(equals + 1));
+    }
+    std::fclose(file);
+}
+} // namespace
+
+extern "C" int ps4_setting_get(const char *key, int fallback) {
+    const std::lock_guard lock(settings_mutex);
+    load_settings();
+    for (const auto &[name, value] : settings) {
+        if (name == key)
+            return value;
+    }
+    return fallback;
+}
+
+extern "C" void ps4_setting_set(const char *key, int value) {
+    const std::lock_guard lock(settings_mutex);
+    load_settings();
+    bool found = false;
+    for (auto &[name, current] : settings) {
+        if (name == key) {
+            current = value;
+            found = true;
+        }
+    }
+    if (!found)
+        settings.emplace_back(key, value);
+    const std::string path = settings_path(), part = path + ".part";
+    FILE *file = std::fopen(part.c_str(), "w");
+    if (!file)
+        return;
+    for (const auto &[name, current] : settings)
+        std::fprintf(file, "%s=%d\n", name.c_str(), current);
+    std::fclose(file);
+    std::rename(part.c_str(), path.c_str());
+}
+
+// ---- threads
+extern "C" {
+void ps4_watch_thread(const char *name); // port/ps4_sampler.cpp: the name in crash and freeze reports
+void *ps4_pthread_self() __asm__("scePthreadSelf");
+int32_t ps4_pthread_set_prio(void *thread, int prio) __asm__("scePthreadSetprio");
+int32_t ps4_pthread_set_affinity(void *thread, uint64_t mask) __asm__("scePthreadSetaffinity");
+}
+
+extern "C" void ps4_thread_name(const char *name) {
+    ps4_watch_thread(name);
+}
+
+extern "C" void ps4_thread_role(int role) {
+    void *self = ps4_pthread_self();
+    int prio = 700;
+    switch (role) {
+    case PS4_ROLE_BACKGROUND:
+        prio = 767;
+        // cores 4-6: never in the way of the game's and the renderer's threads
+        ps4_pthread_set_affinity(self, 0x70);
+        break;
+    case PS4_ROLE_LOW:
+        prio = 720;
+        break;
+    case PS4_ROLE_HIGH:
+        prio = 660;
+        break;
+    case PS4_ROLE_HIGHER:
+        prio = 640;
+        break;
+    case PS4_ROLE_HIGHEST:
+        prio = 620;
+        break;
+    default:
+        break;
+    }
+    ps4_pthread_set_prio(self, prio);
 }
 
 // The crash log's app part (port/ps4_crashlog.cpp; create-fself needs it defined).

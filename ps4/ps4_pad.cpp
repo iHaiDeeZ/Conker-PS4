@@ -56,8 +56,8 @@ constexpr ButtonMap BUTTONS[] = {
 // The quick menu's buttons: a touch pad click, or L3 + R3 together
 constexpr uint32_t QUICK_MENU_COMBO = ORBIS_PAD_BUTTON_L3 | ORBIS_PAD_BUTTON_R3;
 std::atomic<int> quick_menu_requests{ 0 };
-// Circle, which closes the quick menu
-std::atomic<int> back_presses{ 0 };
+// The first pad's buttons for the quick menu's own navigation, the left stick folded into the d-pad
+std::atomic<uint32_t> menu_buttons{ 0 };
 
 // 0-255, centre 128
 Sint16 stick(uint8_t value) {
@@ -81,9 +81,19 @@ void SDLCALL update(void *userdata) {
     const bool combo_before = (pad.buttons & QUICK_MENU_COMBO) == QUICK_MENU_COMBO;
     if ((pressed & ORBIS_PAD_BUTTON_TOUCH_PAD) || (combo_now && !combo_before))
         quick_menu_requests.fetch_add(1);
-    if (pressed & ORBIS_PAD_BUTTON_CIRCLE)
-        back_presses.fetch_add(1);
     pad.buttons = data.buttons;
+    if (&pad == &pads[0]) {
+        uint32_t held = data.buttons;
+        if (data.leftStick.y < 50)
+            held |= ORBIS_PAD_BUTTON_UP;
+        if (data.leftStick.y > 205)
+            held |= ORBIS_PAD_BUTTON_DOWN;
+        if (data.leftStick.x < 50)
+            held |= ORBIS_PAD_BUTTON_LEFT;
+        if (data.leftStick.x > 205)
+            held |= ORBIS_PAD_BUTTON_RIGHT;
+        menu_buttons.store(held, std::memory_order_relaxed);
+    }
     if (pad.opened == nullptr)
         pad.opened = SDL_JoystickFromInstanceID(pad.joystick);
     SDL_Joystick *joystick = pad.opened;
@@ -161,8 +171,8 @@ extern "C" int ps4_pad_take_quick_menu_requests(void) {
     return quick_menu_requests.exchange(0);
 }
 
-extern "C" int ps4_pad_take_back_presses(void) {
-    return back_presses.exchange(0);
+extern "C" uint32_t ps4_pad_menu_buttons(void) {
+    return menu_buttons.load(std::memory_order_relaxed);
 }
 
 extern "C" void ps4_pad_init(void) {

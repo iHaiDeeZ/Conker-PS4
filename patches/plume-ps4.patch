@@ -14,21 +14,128 @@ index 0789c20..9b33ca2 100644
  # Project options
  include(CMakeDependentOption)
 diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
-index f1dd503..b8e0592 100644
+index f1dd503..eaf47b6 100644
 --- a/plume_vulkan.cpp
 +++ b/plume_vulkan.cpp
-@@ -27,6 +27,10 @@
+@@ -27,6 +27,117 @@
  // TODO:
  // - Fix resource pools.
  
 +#ifdef __PS4__
++#include <atomic>
++#include <chrono>
++#include <fstream>
++#include <mutex>
++#include <thread>
++
 +PFN_vkGetInstanceProcAddr ps4_vk_get_instance_proc_addr(); // ps4/ps4_wsi.cpp
++extern "C" const char *ps4_data_dir(); // port/ps4_crashlog.cpp
++
++// The pipeline cache in a file (/data/Conker/pipelines.bin), as G-Diffuser keeps its own: RADV's
++// shader compiler needs up to seconds per RT64 pipeline on the PS4's CPU, and with the cache a
++// pipeline made in an earlier run is ready at once. Loaded with the device; written every 20 s
++// while new pipelines appear, and when the device goes.
++namespace {
++    std::mutex ps4CacheMutex;
++    VkDevice ps4CacheDevice = VK_NULL_HANDLE;
++    VkPipelineCache ps4Cache = VK_NULL_HANDLE;
++    std::atomic<uint32_t> ps4CacheMade{ 0 };
++    uint32_t ps4CacheSavedAt = 0;
++    std::atomic<bool> ps4CacheSaverStarted{ false };
++
++    std::string ps4CachePath() {
++        return std::string(ps4_data_dir()) + "/pipelines.bin";
++    }
++
++    // under ps4CacheMutex
++    void ps4SaveCacheLocked() {
++        const uint32_t made = ps4CacheMade.load();
++        if ((ps4Cache == VK_NULL_HANDLE) || (made == ps4CacheSavedAt)) {
++            return;
++        }
++
++        size_t size = 0;
++        if ((vkGetPipelineCacheData(ps4CacheDevice, ps4Cache, &size, nullptr) != VK_SUCCESS) || (size == 0)) {
++            return;
++        }
++
++        std::vector<char> data(size);
++        if (vkGetPipelineCacheData(ps4CacheDevice, ps4Cache, &size, data.data()) != VK_SUCCESS) {
++            return;
++        }
++
++        const std::string path = ps4CachePath(), part = path + ".part";
++        {
++            std::ofstream out(part, std::ios::binary | std::ios::trunc);
++            out.write(data.data(), std::streamsize(size));
++            if (!out.good()) {
++                return;
++            }
++        }
++
++        std::rename(part.c_str(), path.c_str());
++        ps4CacheSavedAt = made;
++        fprintf(stdout, "[plume] pipeline cache: %zu KiB written (%u pipelines made this run)\n", size / 1024, made);
++    }
++
++    void ps4OpenCache(VkDevice device) {
++        std::vector<char> data;
++        {
++            std::ifstream in(ps4CachePath(), std::ios::binary);
++            if (in) {
++                data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
++            }
++        }
++
++        VkPipelineCacheCreateInfo info = {};
++        info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
++        info.initialDataSize = data.size();
++        info.pInitialData = data.empty() ? nullptr : data.data();
++        VkPipelineCache cache = VK_NULL_HANDLE;
++        if (vkCreatePipelineCache(device, &info, nullptr, &cache) != VK_SUCCESS) {
++            // another driver build's data: start again
++            info.initialDataSize = 0;
++            info.pInitialData = nullptr;
++            if (vkCreatePipelineCache(device, &info, nullptr, &cache) != VK_SUCCESS) {
++                cache = VK_NULL_HANDLE;
++            }
++        }
++
++        fprintf(stdout, "[plume] pipeline cache: %zu KiB loaded from %s\n", data.size() / 1024, ps4CachePath().c_str());
++        {
++            std::lock_guard lock(ps4CacheMutex);
++            ps4CacheDevice = device;
++            ps4Cache = cache;
++        }
++
++        if (!ps4CacheSaverStarted.exchange(true)) {
++            std::thread([]() {
++                for (;;) {
++                    std::this_thread::sleep_for(std::chrono::seconds(20));
++                    std::lock_guard lock(ps4CacheMutex);
++                    ps4SaveCacheLocked();
++                }
++            }).detach();
++        }
++    }
++
++    void ps4CloseCache() {
++        std::lock_guard lock(ps4CacheMutex);
++        ps4SaveCacheLocked();
++        if (ps4Cache != VK_NULL_HANDLE) {
++            vkDestroyPipelineCache(ps4CacheDevice, ps4Cache, nullptr);
++        }
++
++        ps4Cache = VK_NULL_HANDLE;
++        ps4CacheDevice = VK_NULL_HANDLE;
++    }
++}
 +#endif
 +
  namespace plume {
      // Backend constants.
  
-@@ -52,6 +56,9 @@ namespace plume {
+@@ -52,6 +163,9 @@ namespace plume {
          VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
  #   elif defined(__ANDROID__)
          VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
@@ -38,7 +145,31 @@ index f1dd503..b8e0592 100644
  #   elif defined(__linux__)
  #   if !defined(PLUME_SDL_VULKAN_ENABLED)
          VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-@@ -2095,6 +2102,15 @@ namespace plume {
+@@ -1390,7 +1504,10 @@ namespace plume {
+         pipelineInfo.layout = pipelineLayout->vk;
+         pipelineInfo.stage = stageInfo;
+ 
+-        VkResult res = vkCreateComputePipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
++        VkResult res = vkCreateComputePipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
++#   ifdef __PS4__
++        ps4CacheMade++;
++#   endif
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkCreateComputePipelines failed with error code 0x%X.\n", res);
+             return;
+@@ -1649,7 +1766,10 @@ namespace plume {
+         pipelineInfo.layout = pipelineLayout->vk;
+         pipelineInfo.renderPass = renderPass;
+ 
+-        VkResult res = vkCreateGraphicsPipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
++        VkResult res = vkCreateGraphicsPipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
++#   ifdef __PS4__
++        ps4CacheMade++;
++#   endif
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkCreateGraphicsPipelines failed with error code 0x%X.\n", res);
+             return;
+@@ -2095,6 +2215,15 @@ namespace plume {
              fprintf(stderr, "vkCreateWin32SurfaceKHR failed with error code 0x%X.\n", res);
              return;
          }
@@ -54,7 +185,7 @@ index f1dd503..b8e0592 100644
  #   elif defined(PLUME_SDL_VULKAN_ENABLED)
          VulkanInterface *renderInterface = commandQueue->device->renderInterface;
          SDL_bool sdlRes = SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, &surface);
-@@ -4011,6 +4027,14 @@ namespace plume {
+@@ -4011,6 +4140,14 @@ namespace plume {
          pickFamilyQueue(RenderCommandListType::DIRECT, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
          pickFamilyQueue(RenderCommandListType::COMPUTE, VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
          pickFamilyQueue(RenderCommandListType::COPY, VK_QUEUE_TRANSFER_BIT);
@@ -69,7 +200,7 @@ index f1dd503..b8e0592 100644
  
          // Create the struct to store the virtual queues.
          queueFamilies.resize(queueFamilyCount);
-@@ -4023,7 +4047,11 @@ namespace plume {
+@@ -4023,7 +4160,11 @@ namespace plume {
              if (queueFamilyUsed[i]) {
                  VkDeviceQueueCreateInfo queueCreateInfo = {};
                  queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -81,7 +212,33 @@ index f1dd503..b8e0592 100644
                  queueCreateInfo.queueFamilyIndex = i;
                  queueCreateInfo.pQueuePriorities = queuePriorities.data();
                  queueCreateInfos.emplace_back(queueCreateInfo);
-@@ -4464,7 +4492,13 @@ namespace plume {
+@@ -4154,6 +4295,11 @@ namespace plume {
+         if (!nullDescriptorSupported) {
+             nullBuffer = createBuffer(RenderBufferDesc::DefaultBuffer(16, RenderBufferFlag::VERTEX));
+         }
++
++#   ifdef __PS4__
++        ps4OpenCache(vk);
++        pipelineCache = ps4Cache;
++#   endif
+     }
+ 
+     VulkanDevice::~VulkanDevice() {
+@@ -4432,6 +4578,13 @@ namespace plume {
+     void VulkanDevice::release() {
+         nullBuffer = nullptr; // force destruction before destroying allocator
+ 
++#   ifdef __PS4__
++        if (pipelineCache != VK_NULL_HANDLE) {
++            ps4CloseCache();
++            pipelineCache = VK_NULL_HANDLE;
++        }
++#   endif
++
+         if (allocator != VK_NULL_HANDLE) {
+             vmaDestroyAllocator(allocator);
+             allocator = VK_NULL_HANDLE;
+@@ -4464,7 +4617,13 @@ namespace plume {
  #else
      VulkanInterface::VulkanInterface() {
  #endif
@@ -95,7 +252,7 @@ index f1dd503..b8e0592 100644
          if (res != VK_SUCCESS) {
              fprintf(stderr, "volkInitialize failed with error code 0x%X.\n", res);
              return;
-@@ -4500,7 +4534,7 @@ namespace plume {
+@@ -4500,7 +4659,7 @@ namespace plume {
          const std::unordered_set<std::string> dlssExtensions = DLSS::getRequiredInstanceExtensionsVulkan();
  #   endif
  
@@ -104,3 +261,16 @@ index f1dd503..b8e0592 100644
          // Push the extensions specified by SDL as required.
          // SDL2 has this awkward requirement for the window to pull the extensions from. 
          // This can be removed when upgrading to SDL3.
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 0a1edbe..074c9aa 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -417,6 +417,8 @@ namespace plume {
+         std::unique_ptr<RenderBuffer> nullBuffer;
+         bool loadStoreOpNoneSupported = false;
+         bool nullDescriptorSupported = false;
++        // Every pipeline is made through it; on the PS4 it's kept in a file between runs.
++        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+ 
+         VulkanDevice(VulkanInterface *renderInterface, const std::string &preferredDeviceName);
+         ~VulkanDevice() override;

@@ -39,6 +39,52 @@ index d60c4ec..d623a2a 100644
          using WindowHandle = SDL_Window*;
  #elif defined(__APPLE__)
          struct WindowHandle {
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index d4fb0de..d18888a 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -13,6 +13,9 @@
+ 
+ #include "ultramodern/ultra64.h"
+ #include "ultramodern/ultramodern.hpp"
++#if defined(__PS4__)
++#include "ps4_platform.h"
++#endif
+ #include "ultramodern/extensions.h"
+ 
+ #include "ultramodern/rsp.hpp"
+@@ -290,11 +293,17 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
+             return;
+         }
+ 
++#if defined(__PS4__)
++        ps4_perf_begin(PS4_PERF_AUDIO);
++#endif
+         if (!ultramodern::rsp::run_task(PASS_RDRAM task)) {
+             fprintf(stderr, "Failed to execute task type: %" PRIu32 "\n", task->t.type);
+             ULTRAMODERN_QUICK_EXIT();
+         }
+ 
++#if defined(__PS4__)
++        ps4_perf_end(PS4_PERF_AUDIO);
++#endif
+         // Tell the game that the RSP has completed
+         sp_complete();
+         ultramodern::save_states::task_finished();
+@@ -378,7 +387,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+                 ultramodern::extensions::on_displaylist_submitted(displaylist);
+ 
+                 [[maybe_unused]] auto renderer_start = std::chrono::high_resolution_clock::now();
++#if defined(__PS4__)
++                ps4_perf_begin(PS4_PERF_DISPLAY_LIST);
++#endif
+                 renderer_context->send_dl(&task_action->task);
++#if defined(__PS4__)
++                ps4_perf_end(PS4_PERF_DISPLAY_LIST);
++#endif
+                 [[maybe_unused]] auto renderer_end = std::chrono::high_resolution_clock::now();
+ 
+                 dp_complete();
 diff --git a/ultramodern/src/save_states.cpp b/ultramodern/src/save_states.cpp
 index de5a368..abe4a08 100644
 --- a/ultramodern/src/save_states.cpp
@@ -68,24 +114,46 @@ index de5a368..abe4a08 100644
      ImageRange find_image_range() {
          // The first object dl_iterate_phdr reports is the program. Its range is its loaded segments'.
 diff --git a/ultramodern/src/threads.cpp b/ultramodern/src/threads.cpp
-index 221ad3d..f345345 100644
+index 221ad3d..7c6c382 100644
 --- a/ultramodern/src/threads.cpp
 +++ b/ultramodern/src/threads.cpp
-@@ -99,6 +99,18 @@ void ultramodern::set_native_thread_priority(ThreadPriority pri) {
+@@ -99,6 +99,40 @@ void ultramodern::set_native_thread_priority(ThreadPriority pri) {
      }
      // SetThreadPriority(GetCurrentThread(), nPriority);
  }
 +#elif defined(__PS4__)
 +#include <pthread.h>
 +
++#include "ps4_platform.h"
++
 +void ultramodern::set_native_thread_name(const std::string& name) {
-+    // the kernel's own name for the thread (crash logs, the sampler)
++    // the kernel's own name for the thread, and the port's (crash and freeze reports)
 +    pthread_setname_np(pthread_self(), name.c_str());
++    ps4_thread_name(name.c_str());
 +}
 +
 +void ultramodern::set_native_thread_priority(ThreadPriority pri) {
-+    // the PS4's scheduler isn't told: the threads share the app's cores evenly
-+    (void)pri;
++    // above RT64's helpers and the shader compiles (ps4_platform.h): the game's threads (High),
++    // the timer (VeryHigh) and the VI thread (Critical) keep their time
++    switch (pri) {
++        case ThreadPriority::Low:
++            ps4_thread_role(PS4_ROLE_LOW);
++            break;
++        case ThreadPriority::Normal:
++            ps4_thread_role(PS4_ROLE_NORMAL);
++            break;
++        case ThreadPriority::High:
++            ps4_thread_role(PS4_ROLE_HIGH);
++            break;
++        case ThreadPriority::VeryHigh:
++            ps4_thread_role(PS4_ROLE_HIGHER);
++            break;
++        case ThreadPriority::Critical:
++            ps4_thread_role(PS4_ROLE_HIGHEST);
++            break;
++        default:
++            break;
++    }
 +}
  #elif defined(__linux__)
  #include <sys/prctl.h>

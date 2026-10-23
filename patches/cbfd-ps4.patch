@@ -14,10 +14,10 @@ index abfe53e..7b9368f 100644
      # Mods patch the recompiled functions' machine code, which needs __TEXT's maximum protection
      # to allow writing; Apple's linker caps it at r-x, so a wrapper raises it after linking
 diff --git a/host/src/conker.hpp b/host/src/conker.hpp
-index 478a9a0..263bd4d 100644
+index 478a9a0..9257142 100644
 --- a/host/src/conker.hpp
 +++ b/host/src/conker.hpp
-@@ -232,6 +232,11 @@ namespace conker {
+@@ -232,6 +232,15 @@ namespace conker {
      namespace save_states {
          // At start (frontend.cpp): the keys, and the runtime's idle moment that states are taken at.
          void init();
@@ -26,11 +26,15 @@ index 478a9a0..263bd4d 100644
 +        void load();
 +        int next_slot();
 +        int slot();
++        // The PS4 quick menu: pick a slot (1 to slot_count_total()), and where a slot's file is.
++        void set_slot(int slot);
++        int slot_count_total();
++        std::filesystem::path slot_file(int slot);
      }
  
      // fps_counter.cpp: Show FPS, the frame rate counter.
 diff --git a/host/src/frontend.cpp b/host/src/frontend.cpp
-index 58a7262..14ddfa8 100644
+index 58a7262..bf145db 100644
 --- a/host/src/frontend.cpp
 +++ b/host/src/frontend.cpp
 @@ -20,6 +20,10 @@
@@ -91,7 +95,14 @@ index 58a7262..14ddfa8 100644
          window = SDL_CreateWindow(conker::program_name, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
              width, height, flags);
          if (window == nullptr) {
-@@ -238,6 +260,10 @@ namespace {
+@@ -234,10 +256,17 @@ namespace {
+     }
+ 
+     void update_gfx(void*) {
++#if defined(__PS4__)
++        ps4_perf_begin(PS4_PERF_UI);
++#endif
+         recompinput::handle_events();
          conker::texture_packs::update_unpacking();
          conker::fps_counter::update();
          conker::notices::update();
@@ -102,7 +113,17 @@ index 58a7262..14ddfa8 100644
          conker::reticle::update();
          std::string title;
          {
-@@ -313,6 +339,17 @@ namespace {
+@@ -247,6 +276,9 @@ namespace {
+         if (!title.empty() && window != nullptr) {
+             SDL_SetWindowTitle(window, title.c_str());
+         }
++#if defined(__PS4__)
++        ps4_perf_end(PS4_PERF_UI);
++#endif
+     }
+ 
+     // Shows which version of the ROM is in play: on the launcher's Version option and in
+@@ -313,6 +345,17 @@ namespace {
      // The launcher's options: RecompFrontend's usual ones, with Version and Add ROM after Start Game.
      void init_launcher(recompui::LauncherMenu* menu) {
          const recomp::GameEntry& game = supported_games[0];
@@ -120,7 +141,7 @@ index 58a7262..14ddfa8 100644
          // Here rather than at startup, so a ROM given with --rom is already the one stored.
          conker::roms::init(recomp::get_config_path() / game.stored_filename());
          recompui::GameOptionsMenu* options = menu->init_game_options_menu(
-@@ -331,8 +368,11 @@ namespace {
+@@ -331,8 +374,11 @@ namespace {
          conker::local_achievements::init();
          conker::reticle::on_ui_ready();
          options->add_start_game_or_load_rom_option();
@@ -195,10 +216,10 @@ index fc72e54..58e8916 100644
      bool ok = VirtualProtect(begin, end - begin, PAGE_READWRITE, &old) != 0;
  #else
 diff --git a/host/src/save_states.cpp b/host/src/save_states.cpp
-index e7ec257..647856a 100644
+index e7ec257..09fc356 100644
 --- a/host/src/save_states.cpp
 +++ b/host/src/save_states.cpp
-@@ -345,3 +345,21 @@ void conker::save_states::init() {
+@@ -345,3 +345,35 @@ void conker::save_states::init() {
      ultramodern::save_states::set_safe_point_callback(on_safe_point);
      SDL_AddEventWatch(watch_keys, nullptr);
  }
@@ -219,4 +240,18 @@ index e7ec257..647856a 100644
 +
 +int conker::save_states::slot() {
 +    return current_slot;
++}
++
++void conker::save_states::set_slot(int slot) {
++    if (slot >= 1 && slot <= slot_count) {
++        current_slot = slot;
++    }
++}
++
++int conker::save_states::slot_count_total() {
++    return slot_count;
++}
++
++std::filesystem::path conker::save_states::slot_file(int slot) {
++    return slot_path(slot);
 +}

@@ -5,8 +5,8 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.05 on the PS4 at 192.168.0.90, not yet tested there** (v00.03: launcher and pad work;
-Load ROM showed instead of Start Game, fixed in v00.05).
+Status: **v00.06 on the PS4 at 192.168.0.90, not yet tested there**. v00.05 started the game but ran
+it at about 0.5 fps; v00.06 is the performance build (below) with a Crema-style quick menu.
 
 ## Using it
 
@@ -17,14 +17,25 @@ The package contains the game code recompiled from your ROM and the ROM itself (
 reads its data from it; stored in `/data/Conker` on first start): it's for your own console only.
 
 Everything the app writes is in `/data/Conker/`: saves, settings, `conker.log` (this run, with
-stdout/stderr of the runtime, RT64 and the host), `conker.prev.log`, `boot-trace.log` and `crash.log`.
+stdout/stderr of the runtime, RT64 and the host), `conker.prev.log`, `boot-trace.log`, `crash.log`,
+`pipelines.bin` (compiled GPU pipelines, kept between runs) and `ps4.ini` (the port's own switches).
 
 Controls: the DualShock 4 is an SDL game controller (Cross = A, Circle = B, Square = X, Triangle = Y,
 OPTIONS = Start); RecompFrontend's control remapping works as on PC.
 
-**Quick menu**: click the touch pad (or press L3 + R3) in game: Resume, Save State / Load State (slot
-1-9), Next Slot, Settings (RecompFrontend's settings window) and Quit Game. Circle or the touch pad
+**Quick menu** (Crema's in-game menu): click the touch pad (or press L3 + R3) in game. A panel slides
+in from the left: Resume, Save State / Load State (Left/Right pick slot 1-9; a card shows whether the
+slot is saved and when), Frame Rate (30 original / 60 interpolated), Anti-Aliasing, Resolution,
+Volume, FPS Counter, Performance Log, All Settings (RecompFrontend's settings window) and Quit Game.
+Up/Down pick, Left/Right change (applied and saved at once), Cross does it, Circle or the touch pad
 closes it. The game keeps running behind it (the runtime has no pause) but gets no input.
+
+On first start the PS4 defaults are applied once: anti-aliasing off and the game's own 30 fps (RT64's
+interpolation to 60 draws every frame twice). Both can be changed back in the quick menu.
+
+**Performance Log** (quick menu, on by default while the port is being tuned): every 5 s a `perf:`
+line in `conker.log` with the game's frame rate, per-frame time of RT64's workload and present
+threads, audio tasks, the UI, shader compiles (and how many wait), and CPU use of the 7 cores.
 
 ## How it's built
 
@@ -58,9 +69,14 @@ PS4 changes on top (revisions in `patches/BASE.txt`).
 - `ps4/ps4_nfd.cpp`: the file dialogs pick files from `/data/Conker` and USB drives.
 - Paths: program files in `/app0`, app folder `/data/Conker` (recompui, RT64).
 - Save states: backtraces through the unwinder, the eboot's `.text` as the image range.
+- Threads (`ps4_thread_role`): all 7 cores; the game's threads, the timer and VI threads and RT64's
+  workload and present threads above normal priority; RT64's shader compiles at the lowest priority on
+  cores 4-6 only, so the ubershader carries frames while they compile (v00.05's 0.5 fps). RT64's idle
+  workaround thread (a GPU job waited for every millisecond, for desktop power states) is off.
+- plume keeps a `VkPipelineCache` in `/data/Conker/pipelines.bin` (G-Diffuser's idea): loaded at
+  start, written every 20 s while new pipelines appear.
 - `port/` and `toolchain/`: HENkaku's PS4 runtime (heap, crash log, file shims) and toolchain.
 
 ### Not yet
 
 - Mods (`.nrm`): the live recompiler's executable memory and patching the eboot's code are untested.
-- The Vulkan pipeline cache isn't kept between runs (G-Diffuser does: first starts compile shaders).

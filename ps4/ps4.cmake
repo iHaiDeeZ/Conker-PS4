@@ -6,6 +6,7 @@ target_sources(ConkerRecomp PRIVATE
     ${CONKER_PS4_DIR}/ps4_log.cpp
     ${CONKER_PS4_DIR}/ps4_platform.cpp
     ${CONKER_PS4_DIR}/ps4_pad.cpp
+    ${CONKER_PS4_DIR}/ps4_perf.cpp
     ${CONKER_PS4_DIR}/ps4_quick_menu.cpp
     ${CONKER_PS4_DIR}/ps4_wsi.cpp
     ${PS4_RUNTIME_SOURCES})
@@ -18,6 +19,9 @@ target_include_directories(ConkerRecomp PRIVATE
 # The runtime's game memory and the recompiled code's pages, through ps4_platform.cpp
 target_include_directories(librecomp PRIVATE ${CONKER_PS4_DIR})
 target_include_directories(recompui PRIVATE ${CONKER_PS4_DIR})
+# Thread priorities and the performance log's stages (ps4_platform.h) in the runtime and RT64
+target_include_directories(ultramodern PRIVATE ${CONKER_PS4_DIR})
+target_include_directories(rt64 PRIVATE ${CONKER_PS4_DIR})
 
 # The network library's shares (port/ps4_netfs.cpp: SMB and NFS under /net)
 target_link_libraries(ConkerRecomp PRIVATE ${PS4_SYSROOT}/lib/libnfs.a ${PS4_SYSROOT}/lib/libsmb2.a)

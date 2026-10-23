@@ -27,6 +27,8 @@ python3 "$HERE/make-art.py" "$HERE/../assets" "$STAGE/sce_sys"
 echo "$VERSION" > "$STAGE/version.txt"
 # RecompFrontend's fonts, icons, style sheet and controller mappings (/app0/assets)
 cp -r "$SRC/host/assets" "$STAGE/assets"
+# the quick menu's icons and gradients (ps4/ps4_quick_menu.cpp: "ps4menu/...")
+cp -r "$HERE/../assets/menu" "$STAGE/assets/ps4menu"
 # the ROM the code was recompiled from (the US ROM; the build checked it). Not in a folder named
 # rom: create-gp4 leaves that one out of the package's folder list, and PkgTool then fails.
 ROM="${CBFD_ROM:-$SRC/conker/baserom.us.z64}"

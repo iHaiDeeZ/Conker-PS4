@@ -62,10 +62,10 @@ index 237a00d..2a189d2 100644
  # Add any Apple-specific source files and libraries
  if (APPLE)
 diff --git a/src/common/rt64_thread.cpp b/src/common/rt64_thread.cpp
-index c4b080b..3358ff8 100644
+index c4b080b..81567e3 100644
 --- a/src/common/rt64_thread.cpp
 +++ b/src/common/rt64_thread.cpp
-@@ -10,7 +10,7 @@
+@@ -10,10 +10,14 @@
  #if defined(_WIN64)
  #   include <Windows.h>
  #   include "utf8conv/utf8conv.h"
@@ -74,24 +74,52 @@ index c4b080b..3358ff8 100644
  #   include <pthread.h>
  #endif
  
-@@ -43,6 +43,8 @@ namespace RT64 {
++#if defined(__PS4__)
++#   include "ps4_platform.h"
++#endif
++
+ namespace RT64 {
+ #   if defined(_WIN32)
+     static int toWindowsPriority(Thread::Priority priority) {
+@@ -43,6 +47,9 @@ namespace RT64 {
  #   if defined(_WIN32)
          std::wstring nameWide = win32::Utf8ToUtf16(str);
          SetThreadDescription(GetCurrentThread(), nameWide.c_str());
 +#   elif defined(__PS4__)
 +        pthread_setname_np(pthread_self(), str.c_str());
++        ps4_thread_name(str.c_str());
  #   elif defined(__linux__)
          pthread_setname_np(pthread_self(), str.c_str());
  #   elif defined(__APPLE__)
-@@ -55,7 +57,7 @@ namespace RT64 {
+@@ -55,6 +62,28 @@ namespace RT64 {
      void Thread::setCurrentThreadPriority(Priority priority) {
  #   if defined(_WIN32)
          SetThreadPriority(GetCurrentThread(), toWindowsPriority(priority));
--#   elif defined(__linux__) || defined(__APPLE__)
-+#   elif defined(__linux__) || defined(__APPLE__) || defined(__PS4__)
++#   elif defined(__PS4__)
++        // The PS4 schedules by priority (ps4_platform.h): Idle (the shader compiles) runs on cores 4-6
++        // at the lowest priority, so the ubershader carries the frames until a pipeline is ready
++        // instead of the compiles taking the game's cores (v00.05: ~0.5 fps).
++        switch (priority) {
++        case Thread::Priority::Idle:
++        case Thread::Priority::Lowest:
++            ps4_thread_role(PS4_ROLE_BACKGROUND);
++            break;
++        case Thread::Priority::Low:
++            ps4_thread_role(PS4_ROLE_LOW);
++            break;
++        case Thread::Priority::High:
++            ps4_thread_role(PS4_ROLE_HIGH);
++            break;
++        case Thread::Priority::Highest:
++            ps4_thread_role(PS4_ROLE_HIGHER);
++            break;
++        default:
++            ps4_thread_role(PS4_ROLE_NORMAL);
++            break;
++        }
+ #   elif defined(__linux__) || defined(__APPLE__)
          // On Linux, thread priorities can't be changed under the default scheduler policy (SCHED_OTHER) and the other policies
          // that are available without root privileges are lower priority. Instead you can set the thread's "nice" value, which ranges
-         // from -20 to 19 (lower being higher priority). However, by strict POSIX spec "nice" is meant to be per-process instead of
 diff --git a/src/common/rt64_user_paths.cpp b/src/common/rt64_user_paths.cpp
 index f38d8eb..1531e5b 100644
 --- a/src/common/rt64_user_paths.cpp
@@ -119,6 +147,24 @@ index f38d8eb..1531e5b 100644
          PWSTR knownPath = NULL;
          HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &knownPath);
          if (result == S_OK) {
+diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
+index 428208c..9e712d1 100644
+--- a/src/hle/rt64_application.cpp
++++ b/src/hle/rt64_application.cpp
+@@ -71,7 +71,13 @@ namespace RT64 {
+         this->appConfig = appConfig;
+ 
+         frameCounter = 0;
++#   if defined(__PS4__)
++        // the app's seven cores (hardware_concurrency isn't told them): 3 shader compilers (on cores
++        // 4-6, see Thread::setCurrentThreadPriority), 5 for the ubershaders at startup, 1 texture thread
++        threadsAvailable = 7;
++#   else
+         threadsAvailable = std::max(std::thread::hardware_concurrency(), 1U);
++#   endif
+         freeCamClearQueued = false;
+ 
+         if (appConfig.detectDataPath) {
 diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
 index 08f83e5..7752245 100755
 --- a/src/hle/rt64_application_window.cpp
@@ -132,3 +178,153 @@ index 08f83e5..7752245 100755
          if (SDL_VideoInit(nullptr) != 0) {
              printf("Failed to init SDL2 video: %s\n", SDL_GetError());
              assert(false && "Failed to init SDL2 video");
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 2ef2ef5..beae5ce 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -4,6 +4,10 @@
+ 
+ #include "rt64_present_queue.h"
+ 
++#if defined(__PS4__)
++#   include "ps4_platform.h"
++#endif
++
+ #include "common/rt64_thread.h"
+ #include "rhi/rt64_render_hooks.h"
+ 
+@@ -443,6 +447,9 @@ namespace RT64 {
+ 
+     void PresentQueue::threadLoop() {
+         Thread::setCurrentThreadName("RT64 Present");
++#   if defined(__PS4__)
++        Thread::setCurrentThreadPriority(Thread::Priority::High);
++#   endif
+ 
+         // Create the semaphore the acquire method will use.
+         acquiredSemaphore = ext.device->createCommandSemaphore();
+@@ -475,6 +482,12 @@ namespace RT64 {
+             }
+ 
+             if (processCursor >= 0) {
++#           if defined(__PS4__)
++                struct PerfScope {
++                    PerfScope() { ps4_perf_begin(PS4_PERF_PRESENT); }
++                    ~PerfScope() { ps4_perf_end(PS4_PERF_PRESENT); }
++                } perfScope;
++#           endif
+                 std::unique_lock<std::mutex> threadLock(threadMutex);
+                 const bool needsResize = ext.swapChain->needsResize() || !swapChainValid;
+                 if (needsResize) {
+diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
+index e6c0eae..d2af0ae 100644
+--- a/src/hle/rt64_workload_queue.cpp
++++ b/src/hle/rt64_workload_queue.cpp
+@@ -4,6 +4,10 @@
+ 
+ #include "rt64_workload_queue.h"
+ 
++#if defined(__PS4__)
++#   include "ps4_platform.h"
++#endif
++
+ #include "common/rt64_fblog.h"
+ 
+ #include "common/rt64_thread.h"
+@@ -277,7 +281,13 @@ namespace RT64 {
+ 
+         if (ext.sharedResources->userConfigChanged) {
+             idleMutex.lock();
++#       if defined(__PS4__)
++            // A desktop GPU power-state workaround: a GPU job waited for every millisecond. On the PS4
++            // it only took turns with the frames' own work (v00.05: ~450 submits a second).
++            idleActive = false;
++#       else
+             idleActive = ext.sharedResources->userConfig.idleWorkActive;
++#       endif
+             idleMutex.unlock();
+             idleCondition.notify_all();
+         }
+@@ -943,6 +953,9 @@ namespace RT64 {
+ 
+     void WorkloadQueue::renderThreadLoop() {
+         Thread::setCurrentThreadName("RT64 Workload");
++#   if defined(__PS4__)
++        Thread::setCurrentThreadPriority(Thread::Priority::High);
++#   endif
+ 
+         WorkloadConfiguration workloadConfig;
+         int64_t logicalTicks = 0;
+@@ -965,6 +978,12 @@ namespace RT64 {
+             }
+ 
+             if (processCursor >= 0) {
++#           if defined(__PS4__)
++                struct PerfScope {
++                    PerfScope() { ps4_perf_begin(PS4_PERF_WORKLOAD); }
++                    ~PerfScope() { ps4_perf_end(PS4_PERF_WORKLOAD); }
++                } perfScope;
++#           endif
+                 std::unique_lock<std::mutex> threadLock(threadMutex);
+                 Workload &workload = workloads[processCursor];
+                 ext.presentQueue->waitForPresentId(workload.presentId);
+diff --git a/src/render/rt64_raster_shader.cpp b/src/render/rt64_raster_shader.cpp
+index 721a01e..6b515ad 100644
+--- a/src/render/rt64_raster_shader.cpp
++++ b/src/render/rt64_raster_shader.cpp
+@@ -586,9 +586,16 @@ namespace RT64 {
+ 
+     void RasterShaderUber::waitForPipelineCreation() {
+         if (!pipelinesCreated) {
++#       if defined(__PS4__)
++            const auto waitStart = std::chrono::steady_clock::now();
++#       endif
+             for (std::unique_ptr<std::thread> &thread : pipelineThreads) {
+                 thread->join();
+             }
++#       if defined(__PS4__)
++            fprintf(stdout, "[rt64] ubershader pipelines ready (waited %lld ms for them)\n",
++                (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart).count());
++#       endif
+ 
+             pipelineThreads.clear();
+             pipelineThreadCreations.clear();
+diff --git a/src/render/rt64_raster_shader_cache.cpp b/src/render/rt64_raster_shader_cache.cpp
+index bf7b669..fcaf53d 100644
+--- a/src/render/rt64_raster_shader_cache.cpp
++++ b/src/render/rt64_raster_shader_cache.cpp
+@@ -4,6 +4,10 @@
+ 
+ #include "rt64_raster_shader_cache.h"
+ 
++#if defined(__PS4__)
++#   include "ps4_platform.h"
++#endif
++
+ #include "common/rt64_thread.h"
+ 
+ #define ENABLE_OPTIMIZED_SHADER_GENERATION
+@@ -52,6 +56,9 @@ namespace RT64 {
+                     shaderDesc = shaderCache->descQueue.front();
+                     shaderCache->descQueue.pop();
+                     fromPriorityQueue = true;
++#               if defined(__PS4__)
++                    ps4_perf_shader_queue(int(shaderCache->descQueue.size()));
++#               endif
+                 }
+             }
+             
+@@ -60,7 +67,13 @@ namespace RT64 {
+                 assert((shaderCache->shaderUber != nullptr) && "Ubershader should've been created by the time a new shader is submitted to the cache.");
+                 const RenderPipelineLayout *uberPipelineLayout = shaderCache->shaderUber->pipelineLayout.get();
+                 const RenderMultisampling multisampling = shaderCache->multisampling;
++#           if defined(__PS4__)
++                ps4_perf_begin(PS4_PERF_SHADER);
++#           endif
+                 std::unique_ptr<RasterShader> newShader = std::make_unique<RasterShader>(shaderCache->device, shaderDesc, uberPipelineLayout, shaderCache->shaderFormat, multisampling, shaderCache->shaderCompiler.get(), &shaderCache->optimizerCacheSPIRV);
++#           if defined(__PS4__)
++                ps4_perf_end(PS4_PERF_SHADER);
++#           endif
+ 
+                 {
+                     const std::unique_lock<std::mutex> lock(shaderCache->GPUShadersMutex);
