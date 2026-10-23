@@ -339,6 +339,19 @@ extern "C" __attribute__((noinline)) int __wrap_open(const char* path, int flags
     va_start(args, flags);
     const int mode = va_arg(args, int);  // always passed on: harmless when the call had none
     va_end(args);
+    // The PS4 kernel refuses relative paths (EINVAL): resolve them against the working directory.
+    // fopen comes through here, so this covers RmlUi's assets (Conker v00.01 died on recomp.rcss).
+    char absolute[1024];
+    if (path != nullptr && path[0] != '/' && path[0] != '\0' && getcwd(absolute, sizeof(absolute)) != nullptr) {
+        size_t length = strlen(absolute);
+        const char* rest = (path[0] == '.' && path[1] == '/') ? path + 2 : path;
+        if (length > 0 && absolute[length - 1] != '/' && length + 1 < sizeof(absolute))
+            absolute[length++] = '/';
+        if (length + strlen(rest) < sizeof(absolute)) {
+            strcpy(absolute + length, rest);
+            path = absolute;
+        }
+    }
     const int fd = ps4_netfs_is_path(path) ? ps4_netfs_open(path, flags) : __real_open(path, flags, mode);
     // a directory, for the *at functions relative to it
     if (fd >= 0 && (flags & O_DIRECTORY))

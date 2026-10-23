@@ -4,6 +4,7 @@
 #include "ps4_log.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -41,7 +42,14 @@ extern "C" void ps4_platform_init(void) {
     mkdir(ps4_data_dir(), 0777);
     // ScePad and sceAudioOut want the user service up
     sceUserServiceInitialize(nullptr);
-    LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4, data in {}", ps4_data_dir());
+    // the installed package's version (package-conker.sh writes it): an old install looks like a new bug
+    char version[16] = "?";
+    if (FILE *file = std::fopen("/app0/version.txt", "r")) {
+        if (std::fgets(version, sizeof(version), file))
+            version[std::strcspn(version, "\r\n")] = '\0';
+        std::fclose(file);
+    }
+    LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4 v{}, data in {}", version, ps4_data_dir());
 }
 
 // The crash log's app part (port/ps4_crashlog.cpp; create-fself needs it defined).

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 extern "C" const char *ps4_data_dir(); // port/ps4_crashlog.cpp
@@ -21,10 +22,14 @@ void ps4_log_init() {
     const std::string dir = ps4_data_dir();
     const std::string path = dir + "/conker.log";
     std::rename(path.c_str(), (dir + "/conker.prev.log").c_str());
-    // stdout and stderr into the log, unbuffered: a crash mustn't lose the last lines
-    if (std::freopen(path.c_str(), "w", stdout)) {
+    // stdout and stderr into the log, unbuffered: a crash mustn't lose the last lines. Not freopen:
+    // the C library's goes through dup3, a stub on the PS4, and closed stdout instead (v00.01).
+    const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd >= 0) {
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
         std::setvbuf(stdout, nullptr, _IONBF, 0);
-        dup2(fileno(stdout), fileno(stderr));
         std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
 }

@@ -93,7 +93,7 @@ index a7954c7..3a44b02 100644
  #elif defined(__APPLE__)
      appCore.window.window = window_handle.window;
 diff --git a/recompui/src/util/file.cpp b/recompui/src/util/file.cpp
-index 7ee84ed..f54fb80 100644
+index 7ee84ed..44e9a77 100644
 --- a/recompui/src/util/file.cpp
 +++ b/recompui/src/util/file.cpp
 @@ -6,6 +6,10 @@
@@ -118,3 +118,13 @@ index 7ee84ed..f54fb80 100644
          // directly check for portable.txt (windows and native linux binary)
          if (std::filesystem::exists("portable.txt")) {
              return std::filesystem::current_path();
+@@ -117,6 +125,9 @@ namespace recompui {
+     std::filesystem::path file::get_program_path() {
+ #if defined(__APPLE__)
+         return file::apple::get_bundle_resource_directory();
++#elif defined(__PS4__)
++        // the package's files (assets/), absolute: the PS4 refuses relative paths
++        return "/app0";
+ #elif defined(__linux__) && defined(RECOMP_FLATPAK)
+         return "/app/bin";
+ #else
