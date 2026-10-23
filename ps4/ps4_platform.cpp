@@ -3,11 +3,13 @@
 #include "ps4_platform.h"
 #include "ps4_log.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +41,8 @@ std::vector<bool> region_backed;
 size_t backed_total = 0;
 } // namespace
 
+extern "C" int ps4_backtrace(void **frames, int max); // below
+
 extern "C" void ps4_platform_init(void) {
     ps4_boot_trace("main");
     ps4_log_init();
@@ -53,6 +57,14 @@ extern "C" void ps4_platform_init(void) {
         std::fclose(file);
     }
     LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4 v{}, data in {}", version, ps4_data_dir());
+    // the save states' backtrace must stop at the thread's entry (v00.08 didn't: the game crawled)
+    std::thread([] {
+        void *frames[64];
+        const auto start = std::chrono::steady_clock::now();
+        const int count = ps4_backtrace(frames, 64);
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+        LOG_INFO("backtrace check: {} frames in {} us{}", count, us, us < 2000 ? "" : " (too slow: past the thread's entry?)");
+    }).join();
     ps4_perf_set_enabled(ps4_setting_get("perf_log", 1));
     ps4_hot_profiler_set_enabled(ps4_setting_get("profiler", 1));
 }
@@ -162,26 +174,25 @@ extern "C" void ps4_crash_guest_info() {}
 
 // backtrace() for the runtime's save states (where each game thread waits, at every wait): the PS4's C
 // library has no execinfo, so through the unwinder. It stops at the thread's outermost app frame
-// (port/ps4_runtime.cpp: ps4_thread_frame_top): one step further is system code without unwind
-// tables in the eboot, and libunwind looks for those by reading all of .eh_frame, uncached, every
-// time (v00.07: the game ran at ~0.4 fps inside it).
-extern "C" __thread uintptr_t ps4_thread_frame_top;
+// (port/ps4_runtime.cpp: ps4_thread_entry): one step further is system code without unwind tables in
+// the eboot, and libunwind looks for those by reading all of .eh_frame, uncached, every time (v00.07:
+// the game ran at ~0.4 fps inside it). The frame is recognised by its function's start (the FDE
+// libunwind already found for it); v00.08 compared stack addresses, which never matched.
+extern "C" void *ps4_thread_entry(void *raw);
 
 extern "C" int ps4_backtrace(void **frames, int max) {
     struct Walk {
         void **frames;
         int max;
         int count;
-        uintptr_t top;
-    } walk{ frames, max, 0, ps4_thread_frame_top };
+    } walk{ frames, max, 0 };
     _Unwind_Backtrace(
         [](_Unwind_Context *context, void *arg) -> _Unwind_Reason_Code {
             Walk &w = *static_cast<Walk *>(arg);
             if (w.count >= w.max)
                 return _URC_END_OF_STACK;
             w.frames[w.count++] = reinterpret_cast<void *>(_Unwind_GetIP(context));
-            // the frame that started the thread (or one tail-called from it): its caller is the system's
-            if (w.top != 0 && _Unwind_GetCFA(context) > w.top)
+            if (_Unwind_GetRegionStart(context) == reinterpret_cast<uintptr_t>(&ps4_thread_entry))
                 return _URC_END_OF_STACK;
             return _URC_NO_REASON;
         },
