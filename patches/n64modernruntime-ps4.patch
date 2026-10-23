@@ -40,7 +40,7 @@ index d60c4ec..d623a2a 100644
  #elif defined(__APPLE__)
          struct WindowHandle {
 diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
-index d4fb0de..d18888a 100644
+index d4fb0de..b80bb4f 100644
 --- a/ultramodern/src/events.cpp
 +++ b/ultramodern/src/events.cpp
 @@ -13,6 +13,9 @@
@@ -53,7 +53,27 @@ index d4fb0de..d18888a 100644
  #include "ultramodern/extensions.h"
  
  #include "ultramodern/rsp.hpp"
-@@ -290,11 +293,17 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
+@@ -212,6 +215,9 @@ void vi_thread_func() {
+             next = std::chrono::high_resolution_clock::now();
+         }
+         ultramodern::sleep_until(next);
++#if defined(__PS4__)
++        ps4_perf_begin(PS4_PERF_VI);
++#endif
+         auto time_now = ultramodern::time_since_start();
+         // Calculate how many VIs have passed
+         uint64_t new_total_vis = (time_now * (60 * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
+@@ -259,6 +265,9 @@ void vi_thread_func() {
+         if (events_callbacks.vi_callback != nullptr) {
+             events_callbacks.vi_callback();
+         }
++#if defined(__PS4__)
++        ps4_perf_end(PS4_PERF_VI);
++#endif
+     }
+ }
+ 
+@@ -290,11 +299,17 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
              return;
          }
  
@@ -71,7 +91,7 @@ index d4fb0de..d18888a 100644
          // Tell the game that the RSP has completed
          sp_complete();
          ultramodern::save_states::task_finished();
-@@ -378,7 +387,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+@@ -378,7 +393,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
                  ultramodern::extensions::on_displaylist_submitted(displaylist);
  
                  [[maybe_unused]] auto renderer_start = std::chrono::high_resolution_clock::now();

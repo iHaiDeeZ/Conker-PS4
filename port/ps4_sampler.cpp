@@ -674,3 +674,156 @@ extern "C" void ps4_sampler_set_enabled(int on) {
     else if (g_sampler_on.exchange(false))
         ps4_boot_trace("sampler: paused");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The hot-spot profiler (Conker's Performance > Profiler switch, ps4_hot_profiler_set_enabled).
+// Built on the hang dump's signal (dumpHandler), at a low rate: every 20 ms each watched thread that
+// was running code at its last look is looked at again; one that was in a system call (blocked:
+// the instruction before rip is `syscall`) only once a second, so waiting threads are rarely
+// interrupted (the 1 kHz SIGPROF sampler froze SMW's replay thread in a libkernel wait). Every
+// 10 s profile.log gets, per thread with samples: how often it ran, and its busiest code (16-byte
+// buckets: "elf" = .text-relative, symbolize with llvm-symbolizer --obj=<elf of the build>; "sys" =
+// a system library, with the eboot code that called it).
+namespace {
+std::atomic<bool> g_hot_on{false};
+std::atomic<bool> g_hot_started{false};
+constexpr int kHotMax = 1024;  // samples per thread and window (50 a second at most)
+
+struct HotThread {
+    bool running = true;  // at the last look
+    int looks = 0, busy = 0;
+    uint64_t samples[kHotMax];  // bucket (bit 63: system library), and for those the caller
+    uint64_t callers[kHotMax];
+    int count = 0;
+};
+HotThread g_hot[kMaxWatched];
+
+bool inSyscall(uint64_t rip) {
+    if (rip < kSystemLibs || rip >= 2 * kSystemLibs)
+        return false;
+    const auto* code = reinterpret_cast<const uint8_t*>(rip - 2);
+    return code[0] == 0x0f && code[1] == 0x05;
+}
+
+void hotReport(int fd, double at) {
+    char line[256];
+    snprintf(line, sizeof(line), "======== %.0f s\n", at);
+    writeLine(fd, line);
+    const int count = std::min(g_watched_count.load(), kMaxWatched);
+    static uint64_t keys[kHotMax];
+    struct Entry { uint64_t key; int n; };
+    static Entry entries[kHotMax];
+    for (int i = 0; i < count; i++) {
+        HotThread& h = g_hot[i];
+        if (h.looks == 0)
+            continue;
+        snprintf(line, sizeof(line), "-- %s: running in %d of %d looks, %d samples\n", g_watched[i].name,
+                 h.busy, h.looks, h.count);
+        writeLine(fd, line);
+        // busiest buckets, then for system-library samples the callers
+        for (int pass = 0; pass < 2 && h.count > 0; pass++) {
+            int n = 0;
+            for (int s = 0; s < h.count; s++) {
+                if (pass == 0)
+                    keys[n++] = h.samples[s];
+                else if (h.samples[s] >> 63)
+                    keys[n++] = h.callers[s];
+            }
+            if (n == 0)
+                continue;
+            std::sort(keys, keys + n);
+            int unique = 0;
+            for (int s = 0; s < n;) {
+                int e = s;
+                while (e < n && keys[e] == keys[s])
+                    e++;
+                entries[unique++] = {keys[s], e - s};
+                s = e;
+            }
+            std::sort(entries, entries + unique, [](const Entry& a, const Entry& b) { return a.n > b.n; });
+            writeLine(fd, pass == 0 ? "   where:\n" : "   system-library time, called from:\n");
+            for (int e = 0; e < unique && e < 40; e++) {
+                const uint64_t key = entries[e].key;
+                if (pass == 0 && (key >> 63))
+                    snprintf(line, sizeof(line), "   %5.1f%% sys 0x%llx\n", 100.0 * entries[e].n / h.count,
+                             static_cast<unsigned long long>(key & ~(1ULL << 63)));
+                else
+                    snprintf(line, sizeof(line), "   %5.1f%% elf 0x%llx\n", 100.0 * entries[e].n / (pass == 0 ? h.count : n),
+                             static_cast<unsigned long long>(key));
+                writeLine(fd, line);
+            }
+        }
+        h.looks = h.busy = h.count = 0;
+    }
+}
+
+void* hotThread(void*) {
+    ps4_watch_thread("hot profiler");
+    const int fd = createDataFile("profile.log");
+    if (fd < 0)
+        return nullptr;
+    writeLine(fd, "Conker hot-spot profile: every 10 s, the busiest code of each thread that ran.\n");
+    writeModuleList(fd);
+    const uintptr_t text = reinterpret_cast<uintptr_t>(__text_start);
+    const timespec period = {0, 20000000}, pause = {0, 200000}, idle = {0, 200000000};
+    const double start = now();
+    double window = start;
+    for (unsigned round = 0;; round++) {
+        if (!g_hot_on.load(std::memory_order_relaxed)) {
+            nanosleep(&idle, nullptr);
+            window = now();
+            continue;
+        }
+        nanosleep(&period, nullptr);
+        const pthread_t self = pthread_self();
+        const int count = std::min(g_watched_count.load(std::memory_order_acquire), kMaxWatched);
+        for (int i = 0; i < count; i++) {
+            WatchedThread& t = g_watched[i];
+            HotThread& h = g_hot[i];
+            const pthread_t thread = t.thread.load();
+            if (thread == self || (!h.running && round % 50 != static_cast<unsigned>(i) % 50))
+                continue;
+            t.done.store(0);
+            if (pthread_kill(thread, kSigDump) != 0)
+                continue;
+            for (int w = 0; w < 25 && !t.done.load(std::memory_order_acquire); w++)
+                nanosleep(&pause, nullptr);
+            if (!t.done.load(std::memory_order_acquire))
+                continue;
+            const uint64_t rip = t.rip;
+            h.looks++;
+            h.running = !t.in_umtx && !inSyscall(rip);
+            if (!h.running || h.count >= kHotMax)
+                continue;
+            h.busy++;
+            const bool eboot = rip >= text && rip < text + kTextWindow;
+            if (eboot) {
+                h.samples[h.count] = (rip - text) & ~0xFULL;
+                h.callers[h.count] = 0;
+            } else {
+                h.samples[h.count] = (rip & ~0xFULL) | (1ULL << 63);
+                h.callers[h.count] = t.frame_count > 0 ? (t.frames[0] & ~0xFULL) : 0;
+            }
+            h.count++;
+        }
+        if (now() - window >= 10.0) {
+            hotReport(fd, window - start);
+            window = now();
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+extern "C" void ps4_hot_profiler_set_enabled(int on) {
+    g_hot_on.store(on != 0);
+    if (on && !g_hot_started.exchange(true)) {
+        pthread_t thread;
+        if (pthread_create(&thread, nullptr, hotThread, nullptr) == 0)
+            ps4_boot_trace("hot-spot profiler: started, writing profile.log every 10 s");
+    }
+}
+
+extern "C" int ps4_hot_profiler_enabled() {
+    return g_hot_on.load() ? 1 : 0;
+}

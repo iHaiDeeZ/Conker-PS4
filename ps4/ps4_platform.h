@@ -61,6 +61,7 @@ enum {
     PS4_PERF_PRESENT,      // RT64 Present: a picture shown
     PS4_PERF_SHADER,       // RT64 Shader: a specialized pipeline compiled
     PS4_PERF_UI,           // the main thread's frame (SDL events, the menus)
+    PS4_PERF_VI,           // the VI thread's tick (60 a second when the clock keeps up)
     PS4_PERF_COUNT
 };
 void ps4_perf_begin(int stage);
@@ -69,6 +70,11 @@ void ps4_perf_end(int stage);
 void ps4_perf_shader_queue(int waiting);
 int ps4_perf_enabled(void);
 void ps4_perf_set_enabled(int on);
+
+// The hot-spot profiler (port/ps4_sampler.cpp; quick menu > Profiler, ps4.ini profiler, on by default
+// while the port is slow): profile.log every 10 s, each running thread's busiest code.
+void ps4_hot_profiler_set_enabled(int on);
+int ps4_hot_profiler_enabled(void);
 
 #ifdef __cplusplus
 }

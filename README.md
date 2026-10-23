@@ -5,8 +5,9 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.06 on the PS4 at 192.168.0.90, not yet tested there**. v00.05 started the game but ran
-it at about 0.5 fps; v00.06 is the performance build (below) with a Crema-style quick menu.
+Status: **v00.07 on the PS4 at 192.168.0.90, not yet tested there**. v00.06 still ran the game at
+~0.4 fps with RT64 idle (2 ms a frame) and one CPU core busy: v00.07 adds the hot-spot profiler to
+find that thread's code.
 
 ## Using it
 
@@ -35,7 +36,13 @@ interpolation to 60 draws every frame twice). Both can be changed back in the qu
 
 **Performance Log** (quick menu, on by default while the port is being tuned): every 5 s a `perf:`
 line in `conker.log` with the game's frame rate, per-frame time of RT64's workload and present
-threads, audio tasks, the UI, shader compiles (and how many wait), and CPU use of the 7 cores.
+threads, audio tasks, the UI, the VI tick (60 a second when the clock keeps up), shader compiles (and
+how many wait), and CPU use of the 7 cores.
+
+**Profiler** (quick menu, on by default for now): `profile.log`, every 10 s, for each thread that
+ran: how often it was running and its busiest code. Running threads are looked at 50 times a second,
+waiting ones once a second (through the hang dump's signal, never the 1 kHz sampler that froze SMW).
+Symbolize `elf 0x...` lines with `llvm-symbolizer --obj=~/cbfd-build/oelf/vXX.YY.elf`.
 
 ## How it's built
 

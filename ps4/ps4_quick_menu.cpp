@@ -8,6 +8,7 @@
 //   Frame Rate, Anti-Aliasing, Resolution, Volume, FPS Counter: applied at once, saved as the
 //     Settings window would (RecompFrontend's own config)
 //   Performance Log: the port's 5 s timing lines in conker.log (ps4_perf.cpp)
+//   Profiler: each running thread's busiest code in profile.log every 10 s (port/ps4_sampler.cpp)
 //   All Settings (RecompFrontend's whole window: graphics, sound, controls, mods...) | Quit Game
 // It's a recompui context of its own that takes the controller while it's shown, so the game gets no
 // input (the runtime has no pause: the game runs on behind it). Its own navigation reads the pad
@@ -53,12 +54,12 @@ constexpr float PANEL_W = 820.0f;
 constexpr float LEFT = 70.0f;                           // the panel's text column
 constexpr float ROW_H = 52.0f, TOP = 196.0f, GAP = 18.0f;
 
-enum Row { RESUME, SAVE, LOAD, FRAMERATE, ANTIALIASING, RESOLUTION, VOLUME, FPS, PERF, SETTINGS, QUIT, ROW_COUNT };
+enum Row { RESUME, SAVE, LOAD, FRAMERATE, ANTIALIASING, RESOLUTION, VOLUME, FPS, PERF, PROFILER, SETTINGS, QUIT, ROW_COUNT };
 const char *const LABELS[ROW_COUNT] = { "Resume", "Save State", "Load State", "Frame Rate", "Anti-Aliasing", "Resolution",
-                                        "Volume", "FPS Counter", "Performance Log", "All Settings", "Quit Game" };
+                                        "Volume", "FPS Counter", "Performance Log", "Profiler", "All Settings", "Quit Game" };
 const char *const ICONS[ROW_COUNT] = { "ps4menu/resume.svg", "ps4menu/save.svg", "ps4menu/load.svg", "ps4menu/framerate.svg",
                                        "ps4menu/antialiasing.svg", "ps4menu/resolution.svg", "ps4menu/volume.svg", "ps4menu/fps.svg",
-                                       "ps4menu/perf.svg", "ps4menu/settings.svg", "ps4menu/quit.svg" };
+                                       "ps4menu/perf.svg", "ps4menu/profiler.svg", "ps4menu/settings.svg", "ps4menu/quit.svg" };
 // the option a row changes (RecompFrontend's graphics tab; show_fps is Conker's own, on that tab too)
 const std::string SHOW_FPS = "show_fps";
 
@@ -186,6 +187,8 @@ std::string value_text(int row) {
         return graphics_value(SHOW_FPS) ? "On" : "Off";
     case PERF:
         return ps4_perf_enabled() ? "On" : "Off";
+    case PROFILER:
+        return ps4_hot_profiler_enabled() ? "On" : "Off";
     default:
         return "";
     }
@@ -254,6 +257,12 @@ void change(int row, int direction) {
         const int on = ps4_perf_enabled() ? 0 : 1;
         ps4_perf_set_enabled(on);
         ps4_setting_set("perf_log", on);
+        break;
+    }
+    case PROFILER: {
+        const int on = ps4_hot_profiler_enabled() ? 0 : 1;
+        ps4_hot_profiler_set_enabled(on);
+        ps4_setting_set("profiler", on);
         break;
     }
     default:

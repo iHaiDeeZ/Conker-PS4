@@ -48,7 +48,7 @@ uint64_t read_clock(clockid_t clock) {
 void reporter() {
     ps4_thread_name("perf log");
     ps4_thread_role(PS4_ROLE_LOW);
-    const char *names[PS4_PERF_COUNT] = { "game", "audio", "workload", "present", "shaders", "ui" };
+    const char *names[PS4_PERF_COUNT] = { "game", "audio", "workload", "present", "shaders", "ui", "vi" };
     uint64_t last[PS4_PERF_COUNT][3] = {};
     uint64_t last_wall = read_clock(CLOCK_MONOTONIC);
     uint64_t last_process = read_clock(PROCESS_CPU_CLOCK);

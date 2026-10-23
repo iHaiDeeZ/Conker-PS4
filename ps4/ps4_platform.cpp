@@ -54,6 +54,7 @@ extern "C" void ps4_platform_init(void) {
     }
     LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4 v{}, data in {}", version, ps4_data_dir());
     ps4_perf_set_enabled(ps4_setting_get("perf_log", 1));
+    ps4_hot_profiler_set_enabled(ps4_setting_get("profiler", 1));
 }
 
 // ---- the port's settings: /data/Conker/ps4.ini, "key=number" lines, read once and rewritten whole
