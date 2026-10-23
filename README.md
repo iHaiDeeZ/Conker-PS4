@@ -5,7 +5,7 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.01, built and uploaded, not yet tested on the console.**
+Status: **v00.01, built and uploaded to the PS4 at 192.168.0.90, not yet tested there.**
 
 ## Using it
 

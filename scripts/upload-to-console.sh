@@ -2,12 +2,13 @@
 # Puts a Conker package in the console's /data/pkg and removes this app's older packages there
 # (Conker-v*, IV0000-CBFD00064*; other apps' are left alone).
 #   scripts/upload-to-console.sh out/Conker-vXX.YY.pkg
+# Conker's console is the PS4 at 192.168.0.90 (PS4_HOST for another one).
 # Run it from Windows (Git Bash), not from WSL: uploads sent from inside WSL were undone on the
 # console a minute later (M33, 2026-10-12), while the same steps from Windows stayed.
 set -euo pipefail
 PKG="${1:?package path}"
 NAME="$(basename "$PKG")"
-HOST="ftp://${PS4_HOST:-192.168.0.212}:${PS4_FTP_PORT:-2121}"
+HOST="ftp://${PS4_HOST:-192.168.0.90}:${PS4_FTP_PORT:-2121}"
 SIZE="$(stat -c %s "$PKG")"
 export MSYS_NO_PATHCONV=1
 
