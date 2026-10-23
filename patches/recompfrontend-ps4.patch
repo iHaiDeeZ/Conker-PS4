@@ -1,0 +1,120 @@
+diff --git a/lib/SlotMap/slot_map.h b/lib/SlotMap/slot_map.h
+index 467c01b..97a4f32 100644
+--- a/lib/SlotMap/slot_map.h
++++ b/lib/SlotMap/slot_map.h
+@@ -385,6 +385,10 @@ template <typename T> struct slot_map_key32
+   Init, Update, Draw - Data Arrays, 2012
+   https://greysphere.tumblr.com/post/31601463396/data-arrays
+ */
++// The PS4's <machine/param.h> defines PAGESIZE, which the template parameters below are named.
++#ifdef PAGESIZE
++#undef PAGESIZE
++#endif
+ template <typename T, typename TKeyType = slot_map_key64<T>, size_t PAGESIZE = 4096, size_t MINFREEINDICES = 64> class slot_map
+ {
+   public:
+diff --git a/recompinput/CMakeLists.txt b/recompinput/CMakeLists.txt
+index 899372b..de4e4c2 100644
+--- a/recompinput/CMakeLists.txt
++++ b/recompinput/CMakeLists.txt
+@@ -42,7 +42,7 @@ target_include_directories(recompinput PRIVATE
+ 
+ if (WIN32)
+     target_include_directories(recompinput PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
++elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux" OR PS4)
+     target_include_directories(recompinput PRIVATE ${SDL2_INCLUDE_DIRS})
+ endif()
+ 
+diff --git a/recompui/CMakeLists.txt b/recompui/CMakeLists.txt
+index 4dce8e0..d2af0eb 100644
+--- a/recompui/CMakeLists.txt
++++ b/recompui/CMakeLists.txt
+@@ -106,7 +106,7 @@ target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include
+ 
+ if (WIN32)
+     target_include_directories(recompui PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
++elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux" OR PS4)
+     target_include_directories(recompui PRIVATE ${SDL2_INCLUDE_DIRS})
+ endif()
+ 
+diff --git a/recompui/src/composites/ui_mod_installer.cpp b/recompui/src/composites/ui_mod_installer.cpp
+index c91df6f..ed75754 100644
+--- a/recompui/src/composites/ui_mod_installer.cpp
++++ b/recompui/src/composites/ui_mod_installer.cpp
+@@ -14,7 +14,7 @@ namespace recompui {
+     static bool is_dynamic_lib(const std::filesystem::path &file_path) {
+ #if defined(_WIN32)
+         return file_path.extension() == ".dll";
+-#elif defined(__linux__)
++#elif defined(__linux__) || defined(__PS4__)
+         return file_path.extension() == ".so" || file_path.filename().string().find(".so.") != std::string::npos;
+ #elif defined(__APPLE__)
+         return file_path.extension() == ".dylib";
+diff --git a/recompui/src/composites/ui_mod_menu.cpp b/recompui/src/composites/ui_mod_menu.cpp
+index 35a9952..10d20c8 100644
+--- a/recompui/src/composites/ui_mod_menu.cpp
++++ b/recompui/src/composites/ui_mod_menu.cpp
+@@ -302,6 +302,9 @@ void ModMenu::open_mods_folder() {
+ #if defined(WIN32)
+     std::wstring path_wstr = mods_directory.wstring();
+     ShellExecuteW(NULL, L"open", path_wstr.c_str(), NULL, NULL, SW_SHOWDEFAULT);
++#elif defined(__PS4__)
++    // no file manager on the PS4: mods go in over FTP or from a USB drive (the installer)
++    (void)mods_directory;
+ #elif defined(__linux__)
+     std::string command = "xdg-open \"" + mods_directory.string() + "\" &";
+     std::system(command.c_str());
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+index 4fdf81f..32e1e26 100644
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -44,7 +44,7 @@ namespace recompui {
+         #if defined(_WIN32)
+         #define ALLOW_D3D12
+         #endif
+-        #if defined(_WIN32) || defined(__linux__)
++        #if defined(_WIN32) || defined(__linux__) || defined(__PS4__)
+         #define ALLOW_VULKAN
+         #endif
+         #if defined(__APPLE__)
+diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
+index a7954c7..3a44b02 100644
+--- a/recompui/src/renderer/rt64_render_context.cpp
++++ b/recompui/src/renderer/rt64_render_context.cpp
+@@ -225,7 +225,7 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+     RT64::Application::Core appCore{};
+ #if defined(_WIN32)
+     appCore.window = window_handle.window;
+-#elif defined(__linux__) || defined(__ANDROID__)
++#elif defined(__linux__) || defined(__ANDROID__) || defined(__PS4__)
+     appCore.window = window_handle;
+ #elif defined(__APPLE__)
+     appCore.window.window = window_handle.window;
+diff --git a/recompui/src/util/file.cpp b/recompui/src/util/file.cpp
+index 7ee84ed..f54fb80 100644
+--- a/recompui/src/util/file.cpp
++++ b/recompui/src/util/file.cpp
+@@ -6,6 +6,10 @@
+ 
+ #include "recompui/program_config.h"
+ 
++#if defined(__PS4__)
++#include "ps4_platform.h"
++#endif
++
+ #include <filesystem>
+ #include <fstream>
+ #include <iomanip>
+@@ -59,6 +63,10 @@ namespace recompui {
+     }
+ 
+     std::filesystem::path file::get_app_folder_path() {
++#if defined(__PS4__)
++        // the ROM, saves, settings and mods: /data/Conker (the port's ps4_platform.h)
++        return ps4_data_dir();
++#endif
+         // directly check for portable.txt (windows and native linux binary)
+         if (std::filesystem::exists("portable.txt")) {
+             return std::filesystem::current_path();

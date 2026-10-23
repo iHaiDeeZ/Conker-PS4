@@ -1,0 +1,106 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0789c20..9b33ca2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,6 +14,10 @@ if(APPLE)
+ endif()
+ 
+ string(COMPARE EQUAL ${CMAKE_SYSTEM_NAME} "Linux" IS_LINUX)
++# PS4: the window is SDL's (dummy video), the surface the port's VideoOut one (plume_vulkan.cpp).
++if (PS4)
++    set(IS_LINUX TRUE)
++endif()
+ 
+ # Project options
+ include(CMakeDependentOption)
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index f1dd503..b8e0592 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -27,6 +27,10 @@
+ // TODO:
+ // - Fix resource pools.
+ 
++#ifdef __PS4__
++PFN_vkGetInstanceProcAddr ps4_vk_get_instance_proc_addr(); // ps4/ps4_wsi.cpp
++#endif
++
+ namespace plume {
+     // Backend constants.
+ 
+@@ -52,6 +56,9 @@ namespace plume {
+         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+ #   elif defined(__ANDROID__)
+         VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
++#   elif defined(__PS4__)
++        // The port's WSI (ps4/ps4_wsi.cpp) presents a headless surface through VideoOut.
++        VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME,
+ #   elif defined(__linux__)
+ #   if !defined(PLUME_SDL_VULKAN_ENABLED)
+         VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+@@ -2095,6 +2102,15 @@ namespace plume {
+             fprintf(stderr, "vkCreateWin32SurfaceKHR failed with error code 0x%X.\n", res);
+             return;
+         }
++#   elif defined(__PS4__)
++        VulkanInterface *renderInterface = commandQueue->device->renderInterface;
++        VkHeadlessSurfaceCreateInfoEXT surfaceCreateInfo = {};
++        surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
++        res = vkCreateHeadlessSurfaceEXT(renderInterface->instance, &surfaceCreateInfo, nullptr, &surface);
++        if (res != VK_SUCCESS) {
++            fprintf(stderr, "vkCreateHeadlessSurfaceEXT failed with error code 0x%X.\n", res);
++            return;
++        }
+ #   elif defined(PLUME_SDL_VULKAN_ENABLED)
+         VulkanInterface *renderInterface = commandQueue->device->renderInterface;
+         SDL_bool sdlRes = SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, &surface);
+@@ -4011,6 +4027,14 @@ namespace plume {
+         pickFamilyQueue(RenderCommandListType::DIRECT, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
+         pickFamilyQueue(RenderCommandListType::COMPUTE, VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT);
+         pickFamilyQueue(RenderCommandListType::COPY, VK_QUEUE_TRANSFER_BIT);
++#   ifdef __PS4__
++        // One native queue for everything: the port's WSI drops semaphores (on the PS4 they only lose
++        // the device), so compute and copy work must run in order on the graphics queue.
++        std::fill(queueFamilyUsed.begin(), queueFamilyUsed.end(), false);
++        queueFamilyIndices[toFamilyIndex(RenderCommandListType::COMPUTE)] = queueFamilyIndices[toFamilyIndex(RenderCommandListType::DIRECT)];
++        queueFamilyIndices[toFamilyIndex(RenderCommandListType::COPY)] = queueFamilyIndices[toFamilyIndex(RenderCommandListType::DIRECT)];
++        queueFamilyUsed[queueFamilyIndices[toFamilyIndex(RenderCommandListType::DIRECT)]] = true;
++#   endif
+ 
+         // Create the struct to store the virtual queues.
+         queueFamilies.resize(queueFamilyCount);
+@@ -4023,7 +4047,11 @@ namespace plume {
+             if (queueFamilyUsed[i]) {
+                 VkDeviceQueueCreateInfo queueCreateInfo = {};
+                 queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
++#           ifdef __PS4__
++                queueCreateInfo.queueCount = 1;
++#           else
+                 queueCreateInfo.queueCount = std::min(queueFamilyProperties[i].queueCount, MaxQueuesPerFamilyCount);
++#           endif
+                 queueCreateInfo.queueFamilyIndex = i;
+                 queueCreateInfo.pQueuePriorities = queuePriorities.data();
+                 queueCreateInfos.emplace_back(queueCreateInfo);
+@@ -4464,7 +4492,13 @@ namespace plume {
+ #else
+     VulkanInterface::VulkanInterface() {
+ #endif
++#   ifdef __PS4__
++        // RADV is linked in; the port's WSI wraps its entry points (ps4/ps4_wsi.cpp).
++        volkInitializeCustom(ps4_vk_get_instance_proc_addr());
++        VkResult res = VK_SUCCESS;
++#   else
+         VkResult res = volkInitialize();
++#   endif
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "volkInitialize failed with error code 0x%X.\n", res);
+             return;
+@@ -4500,7 +4534,7 @@ namespace plume {
+         const std::unordered_set<std::string> dlssExtensions = DLSS::getRequiredInstanceExtensionsVulkan();
+ #   endif
+ 
+-#   if PLUME_SDL_VULKAN_ENABLED
++#   if PLUME_SDL_VULKAN_ENABLED && !defined(__PS4__)
+         // Push the extensions specified by SDL as required.
+         // SDL2 has this awkward requirement for the window to pull the extensions from. 
+         // This can be removed when upgrading to SDL3.

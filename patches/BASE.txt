@@ -1,0 +1,10 @@
+Base revisions of the PS4 patches (CBFD-Recompiled's own patches applied first, see save-patch.sh)
+CBFD-Recompiled  https://github.com/sciaschi/CBFD-Recompiled  ed1b8bb7f3f036334124ec27eb28efa64e400178
+tools/N64Recomp  ffb39cdad1da5de07eaaa48bd1db4a89a7986771 (checkout d92ead1)
+tools/N64ModernRuntime  cdf5abbd5026fef5c364c676e4667c45e42b6863 (checkout d04b508)
+tools/N64ModernRuntime/N64Recomp/lib/sljit   (checkout f632608)
+tools/rt64  43373749dac9bbc1b653e6a02aed40a9e1783bed (checkout 7e46a1d)
+tools/rt64/src/contrib/plume   (checkout d890ac8)
+tools/RecompFrontend  b1a1477c6556aeb7ed45defbfb5924f721efebc1 (checkout 87d3ce0)
+SDL2  https://github.com/libsdl-org/SDL  release-2.32.10
+FreeType  https://gitlab.freedesktop.org/freetype/freetype  VER-2-13-3

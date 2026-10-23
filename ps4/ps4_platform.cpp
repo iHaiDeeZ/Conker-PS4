@@ -1,0 +1,128 @@
+// Conker's Bad Fur Day: Recompiled for PS4: startup, game memory.
+
+#include "ps4_platform.h"
+#include "ps4_log.h"
+
+#include <cstdint>
+#include <cstring>
+#include <mutex>
+#include <vector>
+
+#include <sys/stat.h>
+#include <unwind.h>
+
+extern "C" {
+// Declared by hand: several OpenOrbis prototypes are wrong (as in HENkaku's mem.cpp).
+size_t sceKernelGetDirectMemorySize();
+int32_t sceKernelAllocateDirectMemory(off_t search_start, off_t search_end, size_t length, size_t alignment, int32_t memory_type, off_t *physical_out);
+int32_t sceKernelMapDirectMemory(void **address, size_t length, int32_t protection, int32_t flags, off_t direct_memory_start, size_t alignment);
+int32_t sceKernelReserveVirtualRange(void **address, size_t length, int32_t flags, size_t alignment);
+int32_t sceKernelMunmap(void *address, size_t length);
+int32_t sceUserServiceInitialize(void *params);
+void ps4_boot_trace(const char *stage); // port/ps4_crashlog.cpp
+}
+
+namespace {
+constexpr size_t REGION = 2u << 20;      // backed 2 MiB at a time, 2 MiB aligned (one large page)
+constexpr int32_t WB_ONION = 0;          // SCE_KERNEL_WB_ONION
+constexpr int32_t MAP_FIXED_FLAG = 0x10; // SCE_KERNEL_MAP_FIXED
+constexpr int32_t PROT_CPU_RW = 0x3;
+
+std::mutex vm_mutex;
+uint8_t *vm_base = nullptr;
+size_t vm_size = 0;
+std::vector<bool> region_backed;
+size_t backed_total = 0;
+} // namespace
+
+extern "C" void ps4_platform_init(void) {
+    ps4_boot_trace("main");
+    ps4_log_init();
+    mkdir(ps4_data_dir(), 0777);
+    // ScePad and sceAudioOut want the user service up
+    sceUserServiceInitialize(nullptr);
+    LOG_INFO("Conker's Bad Fur Day: Recompiled for PS4, data in {}", ps4_data_dir());
+}
+
+// The crash log's app part (port/ps4_crashlog.cpp; create-fself needs it defined).
+extern "C" void ps4_crash_guest_info() {}
+
+// backtrace() for the runtime's save states (where each game thread waits): the PS4's C library has
+// no execinfo, so through the unwinder.
+extern "C" int ps4_backtrace(void **frames, int max) {
+    struct Walk {
+        void **frames;
+        int max;
+        int count;
+    } walk{ frames, max, 0 };
+    _Unwind_Backtrace(
+        [](_Unwind_Context *context, void *arg) -> _Unwind_Reason_Code {
+            Walk &w = *static_cast<Walk *>(arg);
+            if (w.count >= w.max)
+                return _URC_END_OF_STACK;
+            w.frames[w.count++] = reinterpret_cast<void *>(_Unwind_GetIP(context));
+            return _URC_NO_REASON;
+        },
+        &walk);
+    return walk.count;
+}
+
+extern "C" void *ps4_vm_reserve(size_t size) {
+    size = (size + REGION - 1) & ~(REGION - 1);
+    // Above the kernel's own allocations at 0x200000000, away from the heap (0x1000000000) and
+    // RADV's GPU windows (0x4000000000-0x4600000000). A hint whose range isn't free fails
+    // instead of searching on, so try a few.
+    for (const uintptr_t hint : { 0x2000000000ULL, 0x2400000000ULL, 0x3000000000ULL, 0x1800000000ULL, 0x800000000ULL }) {
+        void *address = reinterpret_cast<void *>(hint);
+        const int32_t ret = sceKernelReserveVirtualRange(&address, size, 0, REGION);
+        if (ret == 0) {
+            const std::lock_guard lock(vm_mutex);
+            vm_base = static_cast<uint8_t *>(address);
+            vm_size = size;
+            region_backed.assign(size / REGION, false);
+            LOG_INFO("PS4: {} MiB of game address space at {}", size >> 20, address);
+            return address;
+        }
+        LOG_WARN("PS4: reserving {} MiB at 0x{:X} failed: {:08X}", size >> 20, hint, static_cast<uint32_t>(ret));
+    }
+    return nullptr;
+}
+
+extern "C" int ps4_vm_commit(void *address, size_t size) {
+    const std::lock_guard lock(vm_mutex);
+    uint8_t *begin = static_cast<uint8_t *>(address);
+    if (vm_base == nullptr || begin < vm_base || begin + size > vm_base + vm_size) {
+        LOG_ERROR("PS4: {} (+0x{:X}) is outside the game's address space", address, size);
+        return -1;
+    }
+    const size_t first = (begin - vm_base) / REGION;
+    const size_t last = (begin + size - vm_base + REGION - 1) / REGION;
+    for (size_t region = first; region < last; region++) {
+        if (region_backed[region])
+            continue;
+        off_t phys = 0;
+        int32_t ret = sceKernelAllocateDirectMemory(0, static_cast<off_t>(sceKernelGetDirectMemorySize()), REGION, REGION, WB_ONION, &phys);
+        if (ret != 0) {
+            LOG_ERROR("PS4: out of direct memory ({} MiB of game memory backed, {:08X})", backed_total >> 20, static_cast<uint32_t>(ret));
+            return -1;
+        }
+        uint8_t *const want = vm_base + region * REGION;
+        void *at = want;
+        ret = sceKernelMapDirectMemory(&at, REGION, PROT_CPU_RW, MAP_FIXED_FLAG, phys, REGION);
+        if (ret != 0 || at != want) {
+            // over the reservation failed: in its place
+            sceKernelMunmap(want, REGION);
+            at = want;
+            ret = sceKernelMapDirectMemory(&at, REGION, PROT_CPU_RW, MAP_FIXED_FLAG, phys, REGION);
+        }
+        if (ret != 0 || at != want) {
+            LOG_ERROR("PS4: mapping game memory at {} failed: {:08X}", static_cast<void *>(want), static_cast<uint32_t>(ret));
+            return -1;
+        }
+        // direct memory comes as it was left: the game expects zeros (one thread, at startup)
+        std::memset(want, 0, REGION);
+        region_backed[region] = true;
+        backed_total += REGION;
+    }
+    return 0;
+}

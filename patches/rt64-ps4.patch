@@ -1,0 +1,134 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 237a00d..2a189d2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -69,12 +69,33 @@ set(ZSTD_LEGACY_SUPPORT OFF)
+ set(ZSTD_BUILD_STATIC ON)
+ set(ZSTD_BUILD_SHARED OFF)
+ 
+-add_subdirectory(src/tools/file_to_c)
++if (PS4)
++    # PS4: file_to_c runs at build time, so it's built for the build machine, not the console.
++    set(RT64_HOST_FILE_TO_C "${CMAKE_BINARY_DIR}/host-tools/file_to_c")
++    if (NOT EXISTS "${RT64_HOST_FILE_TO_C}")
++        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/host-tools")
++        execute_process(COMMAND c++ -std=c++17 -O2 "${PROJECT_SOURCE_DIR}/src/tools/file_to_c/file_to_c.cpp" -o "${RT64_HOST_FILE_TO_C}"
++            RESULT_VARIABLE file_to_c_result)
++        if (NOT file_to_c_result EQUAL 0)
++            message(FATAL_ERROR "couldn't build file_to_c for the build machine")
++        endif()
++    endif()
++    add_executable(file_to_c IMPORTED GLOBAL)
++    set_target_properties(file_to_c PROPERTIES IMPORTED_LOCATION "${RT64_HOST_FILE_TO_C}")
++else()
++    add_subdirectory(src/tools/file_to_c)
++endif()
+ add_subdirectory(src/contrib/re-spirv)
+-add_subdirectory(src/contrib/nativefiledialog-extended)
++if (PS4)
++    # PS4: no desktop file dialogs; the port's stand-in picks files from the console's folders.
++    add_library(nfd STATIC "${CONKER_PS4_DIR}/ps4_nfd.cpp")
++    target_include_directories(nfd PUBLIC "${PROJECT_SOURCE_DIR}/src/contrib/nativefiledialog-extended/src/include")
++else()
++    add_subdirectory(src/contrib/nativefiledialog-extended)
++endif()
+ add_subdirectory(src/contrib/zstd/build/cmake)
+ 
+-if (CMAKE_SYSTEM_NAME MATCHES "Linux" AND RT64_SDL_WINDOW_VULKAN)
++if ((CMAKE_SYSTEM_NAME MATCHES "Linux" OR PS4) AND RT64_SDL_WINDOW_VULKAN)
+     set(PLUME_SDL_VULKAN_ENABLED TRUE)
+ elseif (APPLE)
+     set(PLUME_APPLE_RETINA_ENABLED OFF)
+@@ -301,7 +322,7 @@ add_compile_definitions(
+     IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+ )
+ 
+-if (CMAKE_SYSTEM_NAME MATCHES "Linux" AND RT64_SDL_WINDOW_VULKAN)
++if ((CMAKE_SYSTEM_NAME MATCHES "Linux" OR PS4) AND RT64_SDL_WINDOW_VULKAN)
+     add_compile_definitions("PLUME_SDL_VULKAN_ENABLED")
+     add_compile_definitions("RT64_SDL_WINDOW_VULKAN")
+ endif()
+@@ -448,8 +469,10 @@ target_link_libraries(rt64 libzstd_static)
+ target_link_libraries(rt64 plume)
+ 
+ # Add tools.
+-add_subdirectory(src/tools/texture_hasher)
+-add_subdirectory(src/tools/texture_packer)
++if (NOT PS4)
++    add_subdirectory(src/tools/texture_hasher)
++    add_subdirectory(src/tools/texture_packer)
++endif()
+ 
+ # Add any Apple-specific source files and libraries
+ if (APPLE)
+diff --git a/src/common/rt64_thread.cpp b/src/common/rt64_thread.cpp
+index c4b080b..3358ff8 100644
+--- a/src/common/rt64_thread.cpp
++++ b/src/common/rt64_thread.cpp
+@@ -10,7 +10,7 @@
+ #if defined(_WIN64)
+ #   include <Windows.h>
+ #   include "utf8conv/utf8conv.h"
+-#elif defined(__linux__)
++#elif defined(__linux__) || defined(__PS4__)
+ #   include <pthread.h>
+ #endif
+ 
+@@ -43,6 +43,8 @@ namespace RT64 {
+ #   if defined(_WIN32)
+         std::wstring nameWide = win32::Utf8ToUtf16(str);
+         SetThreadDescription(GetCurrentThread(), nameWide.c_str());
++#   elif defined(__PS4__)
++        pthread_setname_np(pthread_self(), str.c_str());
+ #   elif defined(__linux__)
+         pthread_setname_np(pthread_self(), str.c_str());
+ #   elif defined(__APPLE__)
+@@ -55,7 +57,7 @@ namespace RT64 {
+     void Thread::setCurrentThreadPriority(Priority priority) {
+ #   if defined(_WIN32)
+         SetThreadPriority(GetCurrentThread(), toWindowsPriority(priority));
+-#   elif defined(__linux__) || defined(__APPLE__)
++#   elif defined(__linux__) || defined(__APPLE__) || defined(__PS4__)
+         // On Linux, thread priorities can't be changed under the default scheduler policy (SCHED_OTHER) and the other policies
+         // that are available without root privileges are lower priority. Instead you can set the thread's "nice" value, which ranges
+         // from -20 to 19 (lower being higher priority). However, by strict POSIX spec "nice" is meant to be per-process instead of
+diff --git a/src/common/rt64_user_paths.cpp b/src/common/rt64_user_paths.cpp
+index f38d8eb..1531e5b 100644
+--- a/src/common/rt64_user_paths.cpp
++++ b/src/common/rt64_user_paths.cpp
+@@ -4,7 +4,9 @@
+ 
+ #include "rt64_user_paths.h"
+ 
+-#if defined(__linux__)
++#if defined(__PS4__)
++extern "C" const char *ps4_data_dir(); // the port's port/ps4_crashlog.cpp
++#elif defined(__linux__)
+ #   include <unistd.h>
+ #   include <pwd.h>
+ #elif defined(_WIN32)
+@@ -24,7 +26,10 @@ namespace RT64 {
+     std::filesystem::path UserPaths::detectDataPath(const std::filesystem::path &appId) {
+         std::filesystem::path resultPath;
+ 
+-#   if defined(_WIN32)
++#   if defined(__PS4__)
++        // the app's folder
++        resultPath = std::filesystem::path{ ps4_data_dir() } / appId;
++#   elif defined(_WIN32)
+         PWSTR knownPath = NULL;
+         HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &knownPath);
+         if (result == S_OK) {
+diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
+index 08f83e5..7752245 100755
+--- a/src/hle/rt64_application_window.cpp
++++ b/src/hle/rt64_application_window.cpp
+@@ -105,7 +105,7 @@ namespace RT64 {
+         bounds.height = rect.bottom - rect.top;
+ #   elif defined(__ANDROID__)
+         static_assert(false && "Android unimplemented");
+-#   elif defined(__linux__) || defined(__APPLE__)
++#   elif defined(__linux__) || defined(__APPLE__) || defined(__PS4__)
+         if (SDL_VideoInit(nullptr) != 0) {
+             printf("Failed to init SDL2 video: %s\n", SDL_GetError());
+             assert(false && "Failed to init SDL2 video");
