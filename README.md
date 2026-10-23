@@ -5,23 +5,26 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.01, built and uploaded to the PS4 at 192.168.0.90, not yet tested there.**
+Status: **v00.03 on the PS4 at 192.168.0.90, not yet tested there** (v00.02 reached the launcher at 60 fps;
+the controller didn't work).
 
 ## Using it
 
-1. Install `out/Conker-vXX.YY.pkg` (title ID `CBFD00064`).
-2. Put your own **US** ROM (`.z64`, SHA-1 `4cbadd3c4e0729dec46af64ad018050eada4f47a`) in
-   `/data/Conker/` (or the top folder, or a `Conker` folder, of a USB drive).
-3. Start the app and pick **Load ROM**: the PS4 has no file dialog, so it takes the first ROM it finds
-   in those places.
+1. Install `out/Conker-vXX.YY.pkg` (title ID `CBFD00064`) and start it.
+2. Pick **Start Game**. The launcher keeps RecompFrontend's **Controls**, **Settings** and **Mods**.
 
-The package contains the game code recompiled from your ROM: it's for your own console only.
+The package contains the game code recompiled from your ROM and the ROM itself (`/app0/game`, the game
+reads its data from it; stored in `/data/Conker` on first start): it's for your own console only.
 
 Everything the app writes is in `/data/Conker/`: saves, settings, `conker.log` (this run, with
 stdout/stderr of the runtime, RT64 and the host), `conker.prev.log`, `boot-trace.log` and `crash.log`.
 
 Controls: the DualShock 4 is an SDL game controller (Cross = A, Circle = B, Square = X, Triangle = Y,
-OPTIONS = Start, touch pad click = Back); RecompFrontend's control remapping works as on PC.
+OPTIONS = Start); RecompFrontend's control remapping works as on PC.
+
+**Quick menu**: click the touch pad (or press L3 + R3) in game: Resume, Save State / Load State (slot
+1-9), Next Slot, Settings (RecompFrontend's settings window) and Quit Game. Circle or the touch pad
+closes it. The game keeps running behind it (the runtime has no pause) but gets no input.
 
 ## How it's built
 
