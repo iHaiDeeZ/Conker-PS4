@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <iterator>
 
@@ -25,6 +26,7 @@ struct Pad {
     int32_t user = -1;
     SDL_JoystickID joystick = -1;
     SDL_Joystick *opened = nullptr;
+    uint32_t buttons = 0; // last read, for the quick menu's presses
 };
 std::array<Pad, MAX_PADS> pads;
 
@@ -38,8 +40,6 @@ constexpr ButtonMap BUTTONS[] = {
     { SDL_CONTROLLER_BUTTON_B, ORBIS_PAD_BUTTON_CIRCLE },
     { SDL_CONTROLLER_BUTTON_X, ORBIS_PAD_BUTTON_SQUARE },
     { SDL_CONTROLLER_BUTTON_Y, ORBIS_PAD_BUTTON_TRIANGLE },
-    // the touch pad's click stands in for Share, which only the system sees
-    { SDL_CONTROLLER_BUTTON_BACK, ORBIS_PAD_BUTTON_TOUCH_PAD },
     { SDL_CONTROLLER_BUTTON_START, ORBIS_PAD_BUTTON_OPTIONS },
     { SDL_CONTROLLER_BUTTON_LEFTSTICK, ORBIS_PAD_BUTTON_L3 },
     { SDL_CONTROLLER_BUTTON_RIGHTSTICK, ORBIS_PAD_BUTTON_R3 },
@@ -49,7 +49,15 @@ constexpr ButtonMap BUTTONS[] = {
     { SDL_CONTROLLER_BUTTON_DPAD_DOWN, ORBIS_PAD_BUTTON_DOWN },
     { SDL_CONTROLLER_BUTTON_DPAD_LEFT, ORBIS_PAD_BUTTON_LEFT },
     { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, ORBIS_PAD_BUTTON_RIGHT },
+    // the touch pad's click (Share is the system's): also opens the quick menu (ps4_quick_menu.cpp)
+    { SDL_CONTROLLER_BUTTON_TOUCHPAD, ORBIS_PAD_BUTTON_TOUCH_PAD },
 };
+
+// The quick menu's buttons: a touch pad click, or L3 + R3 together
+constexpr uint32_t QUICK_MENU_COMBO = ORBIS_PAD_BUTTON_L3 | ORBIS_PAD_BUTTON_R3;
+std::atomic<int> quick_menu_requests{ 0 };
+// Circle, which closes the quick menu
+std::atomic<int> back_presses{ 0 };
 
 // 0-255, centre 128
 Sint16 stick(uint8_t value) {
@@ -67,6 +75,15 @@ void SDLCALL update(void *userdata) {
     OrbisPadData data{};
     if (scePadReadState(pad.handle, &data) != 0 || !data.connected)
         return;
+    // the quick menu: as the touch pad is clicked, or as L3 + R3 come to be held together
+    const uint32_t pressed = data.buttons & ~pad.buttons;
+    const bool combo_now = (data.buttons & QUICK_MENU_COMBO) == QUICK_MENU_COMBO;
+    const bool combo_before = (pad.buttons & QUICK_MENU_COMBO) == QUICK_MENU_COMBO;
+    if ((pressed & ORBIS_PAD_BUTTON_TOUCH_PAD) || (combo_now && !combo_before))
+        quick_menu_requests.fetch_add(1);
+    if (pressed & ORBIS_PAD_BUTTON_CIRCLE)
+        back_presses.fetch_add(1);
+    pad.buttons = data.buttons;
     if (pad.opened == nullptr)
         pad.opened = SDL_JoystickFromInstanceID(pad.joystick);
     SDL_Joystick *joystick = pad.opened;
@@ -139,6 +156,14 @@ bool open_pad(int32_t user, int slot) {
     return true;
 }
 } // namespace
+
+extern "C" int ps4_pad_take_quick_menu_requests(void) {
+    return quick_menu_requests.exchange(0);
+}
+
+extern "C" int ps4_pad_take_back_presses(void) {
+    return back_presses.exchange(0);
+}
 
 extern "C" void ps4_pad_init(void) {
     scePadInit();

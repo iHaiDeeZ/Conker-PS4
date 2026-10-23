@@ -2,9 +2,9 @@
 # Package the PS4 build (after build-conker.sh) as Conker's Bad Fur Day: Recompiled, CBFD00064
 # (IV0000-CBFD00064_00-CONKERRECOMPPS40.pkg), into out/Conker-vXX.YY.pkg. Earlier packages in out/ stay.
 #   CONKER_VERSION=00.01 package-conker.sh
-# The package carries the recompiled game code built from your own ROM: it's for your console only,
-# never to be shared. The ROM itself isn't in it: put it in /data/Conker (or on a USB drive) and pick
-# Load ROM in the launcher.
+# The package carries the recompiled game code built from your own ROM, and the ROM itself
+# (/app0/game/conker.z64, which the game reads its data from; stored on first start, so there's no
+# Load ROM step): it's for your console only, never to be shared. CBFD_ROM picks another ROM file.
 # The console gets the package from Windows with scripts/upload-to-console.sh (uploads sent from WSL
 # were lost on the console).
 set -euo pipefail
@@ -27,6 +27,12 @@ python3 "$HERE/make-art.py" "$SRC/host/assets/thumbnail.png" "$STAGE/sce_sys"
 echo "$VERSION" > "$STAGE/version.txt"
 # RecompFrontend's fonts, icons, style sheet and controller mappings (/app0/assets)
 cp -r "$SRC/host/assets" "$STAGE/assets"
+# the ROM the code was recompiled from (the US ROM; the build checked it). Not in a folder named
+# rom: create-gp4 leaves that one out of the package's folder list, and PkgTool then fails.
+ROM="${CBFD_ROM:-$SRC/conker/baserom.us.z64}"
+[ -f "$ROM" ] || { echo "missing the ROM ($ROM)" >&2; exit 1; }
+mkdir -p "$STAGE/game"
+cp "$ROM" "$STAGE/game/conker.z64"
 cp "$SRC/LICENSE" "$STAGE/LICENSE.txt"
 # PkgTool's pkg_build crashes ("Sequence contains no elements") on empty folders.
 find "$STAGE" -type d -empty -delete

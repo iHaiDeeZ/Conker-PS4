@@ -13,8 +13,24 @@ index abfe53e..7b9368f 100644
  if (APPLE)
      # Mods patch the recompiled functions' machine code, which needs __TEXT's maximum protection
      # to allow writing; Apple's linker caps it at r-x, so a wrapper raises it after linking
+diff --git a/host/src/conker.hpp b/host/src/conker.hpp
+index 478a9a0..263bd4d 100644
+--- a/host/src/conker.hpp
++++ b/host/src/conker.hpp
+@@ -232,6 +232,11 @@ namespace conker {
+     namespace save_states {
+         // At start (frontend.cpp): the keys, and the runtime's idle moment that states are taken at.
+         void init();
++        // What the keys do (F5 saves to the current slot, F7 loads it, F6 picks the next), for menus.
++        void save();
++        void load();
++        int next_slot();
++        int slot();
+     }
+ 
+     // fps_counter.cpp: Show FPS, the frame rate counter.
 diff --git a/host/src/frontend.cpp b/host/src/frontend.cpp
-index 58a7262..b25f4b6 100644
+index 58a7262..486de5c 100644
 --- a/host/src/frontend.cpp
 +++ b/host/src/frontend.cpp
 @@ -20,6 +20,10 @@
@@ -75,6 +91,44 @@ index 58a7262..b25f4b6 100644
          window = SDL_CreateWindow(conker::program_name, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
              width, height, flags);
          if (window == nullptr) {
+@@ -238,6 +260,10 @@ namespace {
+         conker::texture_packs::update_unpacking();
+         conker::fps_counter::update();
+         conker::notices::update();
++#if defined(__PS4__)
++        // The touch pad's / L3 + R3's quick menu.
++        ps4_quick_menu_update();
++#endif
+         conker::reticle::update();
+         std::string title;
+         {
+@@ -313,6 +339,14 @@ namespace {
+     // The launcher's options: RecompFrontend's usual ones, with Version and Add ROM after Start Game.
+     void init_launcher(recompui::LauncherMenu* menu) {
+         const recomp::GameEntry& game = supported_games[0];
++#if defined(__PS4__)
++        // The package carries the ROM (/app0/game): stored the first time, so the launcher starts the game
++        // straight away (no Load ROM on a console).
++        if (!recomp::is_rom_valid(game.game_id)) {
++            const recomp::RomValidationError bundled = recomp::select_rom("/app0/game/conker.z64", game.game_id);
++            std::printf("[frontend] the package's ROM: %s\n", bundled == recomp::RomValidationError::Good ? "stored" : conker::rom_error_text(bundled));
++        }
++#endif
+         // Here rather than at startup, so a ROM given with --rom is already the one stored.
+         conker::roms::init(recomp::get_config_path() / game.stored_filename());
+         recompui::GameOptionsMenu* options = menu->init_game_options_menu(
+@@ -331,8 +365,11 @@ namespace {
+         conker::local_achievements::init();
+         conker::reticle::on_ui_ready();
+         options->add_start_game_or_load_rom_option();
++#if !defined(__PS4__)
++        // (on the PS4 the package's ROM is the one played: no versions to add or switch between)
+         version_option = options->add_option("Version", on_version_selected);
+         add_rom_option = options->add_option("Add ROM", on_add_rom_selected);
++#endif
+         options->add_setup_controls_option();
+         options->add_settings_option();
+         options->add_mods_option();
 diff --git a/host/src/main.cpp b/host/src/main.cpp
 index 2e97d08..b91cb89 100644
 --- a/host/src/main.cpp
@@ -137,3 +191,29 @@ index fc72e54..58e8916 100644
      DWORD old;
      bool ok = VirtualProtect(begin, end - begin, PAGE_READWRITE, &old) != 0;
  #else
+diff --git a/host/src/save_states.cpp b/host/src/save_states.cpp
+index e7ec257..647856a 100644
+--- a/host/src/save_states.cpp
++++ b/host/src/save_states.cpp
+@@ -345,3 +345,21 @@ void conker::save_states::init() {
+     ultramodern::save_states::set_safe_point_callback(on_safe_point);
+     SDL_AddEventWatch(watch_keys, nullptr);
+ }
++
++// What F5, F7 and F6 do, for menus (the PS4's quick menu).
++void conker::save_states::save() {
++    ask_to_save();
++}
++
++void conker::save_states::load() {
++    ask_to_load();
++}
++
++int conker::save_states::next_slot() {
++    current_slot = current_slot % slot_count + 1;
++    return current_slot;
++}
++
++int conker::save_states::slot() {
++    return current_slot;
++}

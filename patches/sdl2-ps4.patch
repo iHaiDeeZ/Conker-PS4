@@ -1,8 +1,18 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index e45b53e..e4ff1e4 100644
+index e45b53e..eafd3d3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1206,7 +1206,12 @@ endif()
+@@ -494,7 +494,8 @@ option_string(SDL_FOREGROUNDING_SIGNAL "number to use for magic foregrounding si
+ set_option(SDL_HIDAPI              "Enable the HIDAPI subsystem" ON)
+ dep_option(SDL_HIDAPI_LIBUSB       "Use libusb for low level joystick drivers" OFF SDL_HIDAPI OFF)
+ dep_option(SDL_HIDAPI_JOYSTICK     "Use HIDAPI for low level joystick drivers" ON SDL_HIDAPI OFF)
+-dep_option(SDL_VIRTUAL_JOYSTICK    "Enable the virtual-joystick driver" ON SDL_HIDAPI OFF)
++# PS4 port: virtual joysticks (the DualShock 4s) without HIDAPI
++set_option(SDL_VIRTUAL_JOYSTICK    "Enable the virtual-joystick driver" ON)
+ set_option(SDL_LIBUDEV             "Enable libudev support" ON)
+ set_option(SDL_ASAN                "Use AddressSanitizer to detect memory errors" OFF)
+ option_string(SDL_VENDOR_INFO      "Vendor name and/or version to add to SDL_REVISION" "")
+@@ -1206,7 +1207,12 @@ endif()
  # General SDL subsystem options, valid for all platforms
  if(SDL_AUDIO)
    # CheckDummyAudio/CheckDiskAudio - valid for all platforms

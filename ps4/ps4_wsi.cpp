@@ -20,7 +20,7 @@
 //
 // RADV (DolphinPS4's GNM port) is linked into the executable and has no WSI. This file adds
 // VK_EXT_headless_surface and VK_KHR_swapchain on top of it: the swapchain images are linear
-// R8G8B8A8 images in host-visible memory (GPU address = CPU address on the PS4), registered as
+// R8G8B8A8 or B8G8R8A8 images in host-visible memory (GPU address = CPU address on the PS4), registered as
 // VideoOut buffers, and presenting queues a VideoOut flip behind the GPU work submitted so far
 // (ac_ps4_submit_flip in the Mesa winsys). RT64 (plume) keeps using the standard surface/swapchain
 // API through ps4_vk_get_instance_proc_addr(), which volk loads everything from.
@@ -202,7 +202,7 @@ VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevi
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physical, VkSurfaceKHR, VkSurfaceCapabilitiesKHR *caps) {
-    // the images are linear R8G8B8A8: storage too where the GPU writes such images from compute
+    // the images are linear R8G8B8A8 or B8G8R8A8: storage too where the GPU writes such images from compute
     // shaders (FSR's sharpening pass writes the swapchain image that way)
     VkFormatProperties format_props{};
     instance_fn<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties")(physical, VK_FORMAT_R8G8B8A8_UNORM, &format_props);
@@ -228,16 +228,20 @@ VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysic
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice, VkSurfaceKHR, uint32_t *count, VkSurfaceFormatKHR *formats) {
-    // VideoOut A8B8G8R8 = R8G8B8A8 in memory (verified by DolphinPS4)
+    // VideoOut A8B8G8R8 = R8G8B8A8 in memory (verified by DolphinPS4), A8R8G8B8 = B8G8R8A8: RT64
+    // and recompui's swapchains are B8G8R8A8 (plume finds no format otherwise)
+    const VkSurfaceFormatKHR supported[] = {
+        { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
+        { VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
+    };
     if (formats == nullptr) {
-        *count = 1;
+        *count = static_cast<uint32_t>(std::size(supported));
         return VK_SUCCESS;
     }
-    if (*count < 1)
-        return VK_INCOMPLETE;
-    formats[0] = { VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
-    *count = 1;
-    return VK_SUCCESS;
+    const uint32_t n = std::min<uint32_t>(*count, static_cast<uint32_t>(std::size(supported)));
+    memcpy(formats, supported, n * sizeof(VkSurfaceFormatKHR));
+    *count = n;
+    return n < std::size(supported) ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice, VkSurfaceKHR, uint32_t *count, VkPresentModeKHR *modes) {
@@ -328,7 +332,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
     for (uint32_t i = 0; i < sc->image_count; i++) {
         VkImageCreateInfo ici{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         ici.imageType = VK_IMAGE_TYPE_2D;
-        ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ici.format = info->imageFormat == VK_FORMAT_B8G8R8A8_UNORM ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
         ici.extent = { ps4wsi::WIDTH, ps4wsi::HEIGHT, 1 };
         ici.mipLevels = 1;
         ici.arrayLayers = 1;
@@ -373,8 +377,11 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
         addresses[i] = base + offset + layout.offset;
         pitch = static_cast<uint32_t>(layout.rowPitch / 4);
     }
+    // VideoOut's A8R8G8B8 (not in the OpenOrbis headers) is B8G8R8A8 in memory
+    constexpr uint32_t PIXEL_FORMAT_A8R8G8B8_SRGB = 0x80000000u;
+    const uint32_t pixel_format = info->imageFormat == VK_FORMAT_B8G8R8A8_UNORM ? PIXEL_FORMAT_A8R8G8B8_SRGB : ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB;
     OrbisVideoOutBufferAttribute attribute;
-    sceVideoOutSetBufferAttribute(&attribute, ORBIS_VIDEO_OUT_PIXEL_FORMAT_A8B8G8R8_SRGB, ORBIS_VIDEO_OUT_TILING_MODE_LINEAR, 0,
+    sceVideoOutSetBufferAttribute(&attribute, pixel_format, ORBIS_VIDEO_OUT_TILING_MODE_LINEAR, 0,
         ps4wsi::WIDTH, ps4wsi::HEIGHT, pitch);
     // a free bank (the old swapchain is usually still on screen while this one registers)
     release_retired();

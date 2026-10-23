@@ -36,6 +36,10 @@ void ps4_log_init() {
 
 void ps4_log_line(const char *level, const std::string &text) {
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    // one write per line: stdout is unbuffered, and RADV's and the runtime's printfs come from other threads
+    char prefix[32];
+    std::snprintf(prefix, sizeof(prefix), "[%9.3f] %s ", seconds, level);
+    const std::string line = prefix + text + "\n";
     const std::lock_guard lock(log_mutex);
-    std::fprintf(stdout, "[%9.3f] %s %s\n", seconds, level, text.c_str());
+    std::fwrite(line.data(), 1, line.size(), stdout);
 }

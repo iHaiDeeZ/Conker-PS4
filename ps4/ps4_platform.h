@@ -22,6 +22,13 @@ int ps4_vm_commit(void *address, size_t size);
 
 // DualShock 4s as SDL game controllers (virtual joysticks fed from ScePad), after SDL_Init.
 void ps4_pad_init(void);
+// How many times the quick menu was asked for (touch pad click, L3 + R3) since the last call.
+int ps4_pad_take_quick_menu_requests(void);
+// How many times Circle was pressed since the last call (it closes the quick menu).
+int ps4_pad_take_back_presses(void);
+
+// The quick menu (ps4_quick_menu.cpp), from the host's frame update on the main thread.
+void ps4_quick_menu_update(void);
 
 #ifdef __cplusplus
 }

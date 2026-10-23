@@ -6,10 +6,13 @@ target_sources(ConkerRecomp PRIVATE
     ${CONKER_PS4_DIR}/ps4_log.cpp
     ${CONKER_PS4_DIR}/ps4_platform.cpp
     ${CONKER_PS4_DIR}/ps4_pad.cpp
+    ${CONKER_PS4_DIR}/ps4_quick_menu.cpp
     ${CONKER_PS4_DIR}/ps4_wsi.cpp
     ${PS4_RUNTIME_SOURCES})
 target_include_directories(ConkerRecomp PRIVATE
     ${CONKER_PS4_DIR}
+    # conker.hpp, for the quick menu
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
     "${RT64_DIR}/src/contrib/plume/contrib/Vulkan-Headers/include")
 
 # The runtime's game memory and the recompiled code's pages, through ps4_platform.cpp
