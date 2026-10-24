@@ -5,10 +5,10 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.12 on the PS4 at 192.168.0.90, not yet tested there**. v00.11 ran without freezing
+Status: **v00.13 on the PS4 at 192.168.0.90, not yet tested there**. v00.11 ran without freezing
 (550 s+); gameplay holds 30 fps, but cutscenes drop to 10-17 fps with RT64's workload thread at
 70-100 ms of CPU per frame. v00.12 times the parts of RT64's frame (the `rt64:` line) to find which,
-and adds Controls to the quick menu.
+and adds Controls to the quick menu; v00.13 opens the menu with L3 + R3 only (no touch pad).
 
 Before: Since v00.09 the game runs at
 its full 30 fps (2-frame backtraces in 42 us), but v00.09 froze after 85 s and v00.10 (profiler off)
