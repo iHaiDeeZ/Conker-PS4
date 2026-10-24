@@ -66,7 +66,9 @@ extern "C" void ps4_platform_init(void) {
         LOG_INFO("backtrace check: {} frames in {} us{}", count, us, us < 2000 ? "" : " (too slow: past the thread's entry?)");
     }).join();
     ps4_perf_set_enabled(ps4_setting_get("perf_log", 1));
-    ps4_hot_profiler_set_enabled(ps4_setting_get("profiler", 1));
+    // off unless switched on in the quick menu: its signals froze v00.09 after 85 s (a game thread
+    // stopped inside libkernel at 0x800003710 holding the heap's lock, as SMW's sampler did)
+    ps4_hot_profiler_set_enabled(ps4_setting_get("profiler", 0));
 }
 
 // ---- the port's settings: /data/Conker/ps4.ini, "key=number" lines, read once and rewritten whole

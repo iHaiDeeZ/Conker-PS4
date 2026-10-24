@@ -8,7 +8,8 @@
 //   Frame Rate, Anti-Aliasing, Resolution, Volume, FPS Counter: applied at once, saved as the
 //     Settings window would (RecompFrontend's own config)
 //   Performance Log: the port's 5 s timing lines in conker.log (ps4_perf.cpp)
-//   Profiler: each running thread's busiest code in profile.log every 10 s (port/ps4_sampler.cpp)
+//   Profiler: each running thread's busiest code in profile.log every 10 s (port/ps4_sampler.cpp);
+//     off by default: its signals can freeze the game
 //   All Settings (RecompFrontend's whole window: graphics, sound, controls, mods...) | Quit Game
 // It's a recompui context of its own that takes the controller while it's shown, so the game gets no
 // input (the runtime has no pause: the game runs on behind it). Its own navigation reads the pad

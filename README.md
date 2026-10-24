@@ -5,11 +5,15 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.09 on the PS4 at 192.168.0.90, not yet tested there**. v00.07's profile found the
-slowness: the save states' wait signature (a native backtrace at every game thread wait) stepped past
-the thread's first frame into system code, and libunwind then searched all 1.9 MB of `.eh_frame` each
-time. v00.08's cut-off compared stack addresses and never matched; v00.09 stops at the thread entry
-function itself (`ps4_thread_entry`, never tail-called) and logs a `backtrace check` at start.
+Status: **v00.10 on the PS4 at 192.168.0.90, not yet tested there**. v00.09 runs at full speed (the
+game's 30 fps, 2-frame backtraces in 42 us) but froze after 85 s: the profiler's signal caught a game
+thread inside libkernel (0x800003710) while it held the heap's lock, and every thread that allocated
+then spun on it, the same stop as SMW's sampler. v00.10 has the profiler off by default.
+
+The slowness before v00.09: the save states' wait signature (a native backtrace at every game thread
+wait) stepped past the thread's first frame into system code, and libunwind then searched all 1.9 MB
+of `.eh_frame` each time. v00.09 stops at the thread entry function itself (`ps4_thread_entry`, never
+tail-called) and logs a `backtrace check` at start.
 
 ## Using it
 
@@ -41,9 +45,11 @@ line in `conker.log` with the game's frame rate, per-frame time of RT64's worklo
 threads, audio tasks, the UI, the VI tick (60 a second when the clock keeps up), shader compiles (and
 how many wait), and CPU use of the 7 cores.
 
-**Profiler** (quick menu, on by default for now): `profile.log`, every 10 s, for each thread that
-ran: how often it was running and its busiest code. Running threads are looked at 50 times a second,
-waiting ones once a second (through the hang dump's signal, never the 1 kHz sampler that froze SMW).
+**Profiler** (quick menu, off by default): `profile.log`, every 10 s, for each thread that ran: how
+often it was running and its busiest code. Running threads are looked at 50 times a second, waiting
+ones once a second, through the hang dump's signal. Only for short runs: like SMW's sampler, a signal
+landing at the wrong moment in libkernel (0x800003710) stops that thread for good (v00.09 froze after
+85 s with the game thread holding the heap's lock).
 Symbolize `elf 0x...` lines with `llvm-symbolizer --obj=~/cbfd-build/oelf/vXX.YY.elf`.
 
 ## How it's built
