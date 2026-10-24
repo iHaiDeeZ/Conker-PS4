@@ -5,7 +5,12 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.11 on the PS4 at 192.168.0.90, not yet tested there**. Since v00.09 the game runs at
+Status: **v00.12 on the PS4 at 192.168.0.90, not yet tested there**. v00.11 ran without freezing
+(550 s+); gameplay holds 30 fps, but cutscenes drop to 10-17 fps with RT64's workload thread at
+70-100 ms of CPU per frame. v00.12 times the parts of RT64's frame (the `rt64:` line) to find which,
+and adds Controls to the quick menu.
+
+Before: Since v00.09 the game runs at
 its full 30 fps (2-frame backtraces in 42 us), but v00.09 froze after 85 s and v00.10 (profiler off)
 after 340 s. Both look like the freeze TOTK had: the heap's lock was dlmalloc's spin lock, which
 spins and yields, and the PS4 only yields to threads of the same or higher priority. When a
@@ -33,11 +38,12 @@ stdout/stderr of the runtime, RT64 and the host), `conker.prev.log`, `boot-trace
 Controls: the DualShock 4 is an SDL game controller (Cross = A, Circle = B, Square = X, Triangle = Y,
 OPTIONS = Start); RecompFrontend's control remapping works as on PC.
 
-**Quick menu** (Crema's in-game menu): click the touch pad (or press L3 + R3) in game. A panel slides
+**Quick menu** (Crema's in-game menu): press L3 + R3 together in game. A panel slides
 in from the left: Resume, Save State / Load State (Left/Right pick slot 1-9; a card shows whether the
 slot is saved and when), Frame Rate (30 original / 60 interpolated), Anti-Aliasing, Resolution,
-Volume, FPS Counter, Performance Log, All Settings (RecompFrontend's settings window) and Quit Game.
-Up/Down pick, Left/Right change (applied and saved at once), Cross does it, Circle or the touch pad
+Volume, FPS Counter, Performance Log, Profiler, Controls (the settings window opened on its Controls
+tab, to remap the pad's buttons), All Settings (RecompFrontend's settings window) and Quit Game.
+Up/Down pick, Left/Right change (applied and saved at once), Cross does it, Circle or L3 + R3
 closes it. The game keeps running behind it (the runtime has no pause) but gets no input.
 
 On first start the PS4 defaults are applied once: anti-aliasing off and the game's own 30 fps (RT64's
@@ -46,7 +52,10 @@ interpolation to 60 draws every frame twice). Both can be changed back in the qu
 **Performance Log** (quick menu, on by default while the port is being tuned): every 5 s a `perf:`
 line in `conker.log` with the game's frame rate, per-frame time of RT64's workload and present
 threads, audio tasks, the UI, the VI tick (60 a second when the clock keeps up), shader compiles (and
-how many wait), and CPU use of the 7 cores.
+how many wait), and CPU use of the 7 cores. With it an `rt64:` line splits RT64's frame (per frame
+drawn, interpolated ones included): draws and framebuffer pairs, then wall and CPU time of the RSP
+setup, the framebuffer setup (targets, texture cache), recording the command list, submitting and
+waiting for the GPU, and the GPU's own time from RT64's timestamps.
 
 **Freeze watchdog** (with the Performance Log): when the VI tick or the game's frames stop for 10 s,
 every thread's place and the eboot addresses on its stack go to `freeze.log`, twice, 3 s apart (the

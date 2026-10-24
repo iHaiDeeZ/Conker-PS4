@@ -49,11 +49,11 @@ constexpr ButtonMap BUTTONS[] = {
     { SDL_CONTROLLER_BUTTON_DPAD_DOWN, ORBIS_PAD_BUTTON_DOWN },
     { SDL_CONTROLLER_BUTTON_DPAD_LEFT, ORBIS_PAD_BUTTON_LEFT },
     { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, ORBIS_PAD_BUTTON_RIGHT },
-    // the touch pad's click (Share is the system's): also opens the quick menu (ps4_quick_menu.cpp)
+    // the touch pad's click (Share is the system's): a button like the others, for the controls
     { SDL_CONTROLLER_BUTTON_TOUCHPAD, ORBIS_PAD_BUTTON_TOUCH_PAD },
 };
 
-// The quick menu's buttons: a touch pad click, or L3 + R3 together
+// The quick menu's buttons: L3 + R3 together (not the touch pad: the user wants it left alone)
 constexpr uint32_t QUICK_MENU_COMBO = ORBIS_PAD_BUTTON_L3 | ORBIS_PAD_BUTTON_R3;
 std::atomic<int> quick_menu_requests{ 0 };
 // The first pad's buttons for the quick menu's own navigation, the left stick folded into the d-pad
@@ -75,11 +75,10 @@ void SDLCALL update(void *userdata) {
     OrbisPadData data{};
     if (scePadReadState(pad.handle, &data) != 0 || !data.connected)
         return;
-    // the quick menu: as the touch pad is clicked, or as L3 + R3 come to be held together
-    const uint32_t pressed = data.buttons & ~pad.buttons;
+    // the quick menu: as L3 + R3 come to be held together
     const bool combo_now = (data.buttons & QUICK_MENU_COMBO) == QUICK_MENU_COMBO;
     const bool combo_before = (pad.buttons & QUICK_MENU_COMBO) == QUICK_MENU_COMBO;
-    if ((pressed & ORBIS_PAD_BUTTON_TOUCH_PAD) || (combo_now && !combo_before))
+    if (combo_now && !combo_before)
         quick_menu_requests.fetch_add(1);
     pad.buttons = data.buttons;
     if (&pad == &pads[0]) {

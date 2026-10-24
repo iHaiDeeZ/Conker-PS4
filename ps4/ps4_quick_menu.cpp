@@ -1,15 +1,16 @@
 // Conker's Bad Fur Day: Recompiled for PS4: the quick menu, Crema's in-game menu redrawn in recompui.
 //
-// A touch pad click (or L3 + R3) in game slides a dark panel in from the left, its edge a glowing
+// L3 + R3 in game slides a dark panel in from the left, its edge a glowing
 // line: the header (Conker, a pulsing IN-GAME MENU tag, the game), rows with icons and a highlight
 // that glides between them, the clock, and the buttons at the bottom. Up/Down pick a row, Left/Right
-// change its value (held: repeated), Cross does it, Circle (or the touch pad again) goes back.
+// change its value (held: repeated), Cross does it, Circle (or L3 + R3 again) goes back.
 //   Resume | Save State, Load State (slot 1-9, with a card on the right: saved when, a dot per slot)
 //   Frame Rate, Anti-Aliasing, Resolution, Volume, FPS Counter: applied at once, saved as the
 //     Settings window would (RecompFrontend's own config)
 //   Performance Log: the port's 5 s timing lines in conker.log (ps4_perf.cpp)
 //   Profiler: each running thread's busiest code in profile.log every 10 s (port/ps4_sampler.cpp);
 //     off by default: its signals can freeze the game
+//   Controls (RecompFrontend's Settings window on its Controls tab: remap the pad's buttons) |
 //   All Settings (RecompFrontend's whole window: graphics, sound, controls, mods...) | Quit Game
 // It's a recompui context of its own that takes the controller while it's shown, so the game gets no
 // input (the runtime has no pause: the game runs on behind it). Its own navigation reads the pad
@@ -55,12 +56,13 @@ constexpr float PANEL_W = 820.0f;
 constexpr float LEFT = 70.0f;                           // the panel's text column
 constexpr float ROW_H = 52.0f, TOP = 196.0f, GAP = 18.0f;
 
-enum Row { RESUME, SAVE, LOAD, FRAMERATE, ANTIALIASING, RESOLUTION, VOLUME, FPS, PERF, PROFILER, SETTINGS, QUIT, ROW_COUNT };
+enum Row { RESUME, SAVE, LOAD, FRAMERATE, ANTIALIASING, RESOLUTION, VOLUME, FPS, PERF, PROFILER, CONTROLS, SETTINGS, QUIT, ROW_COUNT };
 const char *const LABELS[ROW_COUNT] = { "Resume", "Save State", "Load State", "Frame Rate", "Anti-Aliasing", "Resolution",
-                                        "Volume", "FPS Counter", "Performance Log", "Profiler", "All Settings", "Quit Game" };
+                                        "Volume", "FPS Counter", "Performance Log", "Profiler", "Controls", "All Settings", "Quit Game" };
 const char *const ICONS[ROW_COUNT] = { "ps4menu/resume.svg", "ps4menu/save.svg", "ps4menu/load.svg", "ps4menu/framerate.svg",
                                        "ps4menu/antialiasing.svg", "ps4menu/resolution.svg", "ps4menu/volume.svg", "ps4menu/fps.svg",
-                                       "ps4menu/perf.svg", "ps4menu/profiler.svg", "ps4menu/settings.svg", "ps4menu/quit.svg" };
+                                       "ps4menu/perf.svg", "ps4menu/profiler.svg", "ps4menu/controls.svg", "ps4menu/settings.svg",
+                                       "ps4menu/quit.svg" };
 // the option a row changes (RecompFrontend's graphics tab; show_fps is Conker's own, on that tab too)
 const std::string SHOW_FPS = "show_fps";
 
@@ -90,7 +92,7 @@ std::string toast_text;
 double toast_until = 0.0;
 
 // What's done once the menu is hidden: a row's action runs after the context is closed
-enum class After { Nothing, Settings, Quit };
+enum class After { Nothing, Controls, Settings, Quit };
 After after_hide = After::Nothing;
 
 double now_seconds() {
@@ -103,7 +105,7 @@ Color with_alpha(Color c, float alpha) {
 }
 
 float row_y(float row) {
-    return TOP + row * ROW_H + (row >= static_cast<float>(SETTINGS) ? GAP : 0.0f);
+    return TOP + row * ROW_H + (row >= static_cast<float>(CONTROLS) ? GAP : 0.0f);
 }
 
 // ---- the values
@@ -196,7 +198,7 @@ std::string value_text(int row) {
 }
 
 bool has_value(int row) {
-    return !(row == RESUME || row == SETTINGS || row == QUIT);
+    return !(row == RESUME || row == CONTROLS || row == SETTINGS || row == QUIT);
 }
 
 void show_toast(const std::string &text, double seconds = 3.0) {
@@ -361,7 +363,7 @@ void create() {
     highlight_back->set_top(0);
 
     // a line before All Settings and Quit Game
-    Element *line = add_box(panel, LEFT - 10.0f, row_y(SETTINGS) - GAP * 0.6f, PANEL_W - LEFT - 30.0f, 1.5f);
+    Element *line = add_box(panel, LEFT - 10.0f, row_y(CONTROLS) - GAP * 0.6f, PANEL_W - LEFT - 30.0f, 1.5f);
     line->set_background_color(with_alpha(ACCENT, 0.35f));
 
     for (int r = 0; r < ROW_COUNT; r++) {
@@ -548,6 +550,10 @@ void act(int row) {
             show_toast("Slot " + std::to_string(conker::save_states::slot()) + " is empty");
         }
         break;
+    case CONTROLS:
+        after_hide = After::Controls;
+        close_menu();
+        break;
     case SETTINGS:
         after_hide = After::Settings;
         close_menu();
@@ -642,8 +648,15 @@ extern "C" void ps4_quick_menu_update(void) {
         // a row's action, once the menu has gone
         const After action = after_hide;
         after_hide = After::Nothing;
-        if (action == After::Settings)
+        if (action == After::Controls) {
+            // the Settings window on its Controls tab: button mappings for the pad (and keyboard)
+            recompui::config::set_tab(recompui::config::controls::id);
             recompui::config::open();
+        }
+        else if (action == After::Settings) {
+            recompui::config::set_tab(recompui::config::general::id);
+            recompui::config::open();
+        }
         else if (action == After::Quit)
             recompui::open_quit_game_prompt();
         return;

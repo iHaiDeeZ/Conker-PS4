@@ -23,7 +23,7 @@ int ps4_vm_commit(void *address, size_t size);
 
 // DualShock 4s as SDL game controllers (virtual joysticks fed from ScePad), after SDL_Init.
 void ps4_pad_init(void);
-// How many times the quick menu was asked for (touch pad click, L3 + R3) since the last call.
+// How many times the quick menu was asked for (L3 + R3) since the last call.
 int ps4_pad_take_quick_menu_requests(void);
 // The first pad's held buttons (ORBIS_PAD_BUTTON_*, the left stick as the d-pad), for the quick menu.
 uint32_t ps4_pad_menu_buttons(void);
@@ -68,6 +68,28 @@ void ps4_perf_begin(int stage);
 void ps4_perf_end(int stage);
 // Shaders waiting to be compiled (RT64's queue, after each one taken)
 void ps4_perf_shader_queue(int waiting);
+
+// RT64's frame in parts (the "rt64:" line, per frame drawn): times taken with ps4_perf_clock
+// around each part, and amounts (draws, framebuffer pairs, the GPU's own time) added up.
+enum {
+    PS4_PERF_RT64_RSP,    // the RSP and world vertex processors' setup
+    PS4_PERF_RT64_SETUP,  // framebuffer pairs: targets, operations, GPU tiles (texture cache)
+    PS4_PERF_RT64_RECORD, // the command list: framebuffer operations and every draw
+    PS4_PERF_RT64_SUBMIT, // execute and wait for the GPU
+    PS4_PERF_RT64_PART_COUNT
+};
+enum {
+    PS4_PERF_RT64_FRAMES, // frames drawn (more than the game's when RT64 interpolates)
+    PS4_PERF_RT64_DRAWS,  // the game's draw calls
+    PS4_PERF_RT64_PAIRS,  // framebuffer pairs
+    PS4_PERF_RT64_GPU_NS, // the GPU's time, from RT64's timestamps
+    PS4_PERF_RT64_VALUE_COUNT
+};
+// The calling thread's wall and CPU clocks (ns), 0 when the log is off.
+void ps4_perf_clock(uint64_t *wall, uint64_t *cpu);
+// A part that started at (wall, cpu), from ps4_perf_clock: ends now.
+void ps4_perf_part(int part, uint64_t wall, uint64_t cpu);
+void ps4_perf_value(int value, uint64_t amount);
 int ps4_perf_enabled(void);
 void ps4_perf_set_enabled(int on);
 

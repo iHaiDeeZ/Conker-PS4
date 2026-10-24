@@ -217,21 +217,25 @@ index 2ef2ef5..beae5ce 100644
                  const bool needsResize = ext.swapChain->needsResize() || !swapChainValid;
                  if (needsResize) {
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index e6c0eae..d2af0ae 100644
+index e6c0eae..f4b8a97 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
-@@ -4,6 +4,10 @@
+@@ -4,6 +4,14 @@
  
  #include "rt64_workload_queue.h"
  
 +#if defined(__PS4__)
 +#   include "ps4_platform.h"
++// PS4: ends a part of the frame for the perf log's "rt64:" line and starts the next.
++#   define RT64_PS4_PART(part) do { ps4_perf_part(part, ps4PartWall, ps4PartCpu); ps4_perf_clock(&ps4PartWall, &ps4PartCpu); } while (false)
++#else
++#   define RT64_PS4_PART(part) do { } while (false)
 +#endif
 +
  #include "common/rt64_fblog.h"
  
  #include "common/rt64_thread.h"
-@@ -277,7 +281,13 @@ namespace RT64 {
+@@ -277,7 +285,13 @@ namespace RT64 {
  
          if (ext.sharedResources->userConfigChanged) {
              idleMutex.lock();
@@ -245,7 +249,58 @@ index e6c0eae..d2af0ae 100644
              idleMutex.unlock();
              idleCondition.notify_all();
          }
-@@ -943,6 +953,9 @@ namespace RT64 {
+@@ -303,6 +317,11 @@ namespace RT64 {
+         const bool usingMSAA = (targetManager.multisampling.sampleCount > 1);
+ 
+         rendererCPUProfiler.start();
++#   if defined(__PS4__)
++        uint64_t ps4PartWall, ps4PartCpu;
++        ps4_perf_clock(&ps4PartWall, &ps4PartCpu);
++        ps4_perf_value(PS4_PERF_RT64_FRAMES, 1);
++#   endif
+ 
+         const bool aspectRatioAdjustment = (abs(workloadConfig.aspectRatioScale - 1.0f) > 1e-6f);
+         const bool processProjections = aspectRatioAdjustment || prevFrame.matched|| curFrame.isDebuggerCameraEnabled(*this);
+@@ -403,6 +422,7 @@ namespace RT64 {
+                 vertexProcessor->process(vertexParams);
+             }
+ 
++            RT64_PS4_PART(PS4_PERF_RT64_RSP);
+             hlslpp::float2 fixedResScale;
+             Framebuffer *colorFb;
+             Framebuffer *depthFb;
+@@ -735,6 +755,7 @@ namespace RT64 {
+             }
+ #       endif
+ 
++            RT64_PS4_PART(PS4_PERF_RT64_SETUP);
+             workerMutex.lock();
+             ext.workloadGraphicsWorker->commandList->begin();
+             ext.workloadGraphicsWorker->commandList->resetQueryPool(queryPool.get(), 0, 2);
+@@ -902,15 +923,22 @@ namespace RT64 {
+ 
+             ext.workloadGraphicsWorker->commandList->writeTimestamp(queryPool.get(), 1);
+             ext.workloadGraphicsWorker->commandList->end();
++            RT64_PS4_PART(PS4_PERF_RT64_RECORD);
+             framebufferRenderer->waitForUploaders();
+             ext.workloadGraphicsWorker->execute();
+             ext.workloadGraphicsWorker->wait();
+             workerMutex.unlock();
++            RT64_PS4_PART(PS4_PERF_RT64_SUBMIT);
+ 
+             // Update the GPU profiler with the results from the timestamps of the frame.
+             queryPool->queryResults();
+             const uint64_t *frameTimestamps = queryPool->getResults();
+             rendererGPUProfiler.log(double(frameTimestamps[1] - frameTimestamps[0]) / 1000000.0);
++#       if defined(__PS4__)
++            ps4_perf_value(PS4_PERF_RT64_GPU_NS, frameTimestamps[1] - frameTimestamps[0]);
++            ps4_perf_value(PS4_PERF_RT64_DRAWS, workload.gameCallCount);
++            ps4_perf_value(PS4_PERF_RT64_PAIRS, fbPairCount);
++#       endif
+ 
+             // Indicate to the texture cache it's safe to delete the textures if no locks are active.
+             ext.textureCache->decrementLock();
+@@ -943,6 +971,9 @@ namespace RT64 {
  
      void WorkloadQueue::renderThreadLoop() {
          Thread::setCurrentThreadName("RT64 Workload");
@@ -255,7 +310,7 @@ index e6c0eae..d2af0ae 100644
  
          WorkloadConfiguration workloadConfig;
          int64_t logicalTicks = 0;
-@@ -965,6 +978,12 @@ namespace RT64 {
+@@ -965,6 +996,12 @@ namespace RT64 {
              }
  
              if (processCursor >= 0) {

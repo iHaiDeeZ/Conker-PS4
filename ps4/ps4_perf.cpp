@@ -39,6 +39,8 @@ struct Stage {
 };
 Stage stages[PS4_PERF_COUNT];
 std::atomic<int> shader_waiting{ 0 };
+Stage parts[PS4_PERF_RT64_PART_COUNT];
+std::atomic<uint64_t> values[PS4_PERF_RT64_VALUE_COUNT];
 std::atomic<bool> enabled{ false };
 std::atomic<bool> reporter_started{ false };
 
@@ -58,6 +60,8 @@ void reporter() {
     ps4_thread_role(PS4_ROLE_LOW);
     const char *names[PS4_PERF_COUNT] = { "game", "audio", "workload", "present", "shaders", "ui", "vi" };
     uint64_t last[PS4_PERF_COUNT][3] = {};
+    uint64_t last_parts[PS4_PERF_RT64_PART_COUNT][2] = {};
+    uint64_t last_values[PS4_PERF_RT64_VALUE_COUNT] = {};
     uint64_t last_wall = read_clock(CLOCK_MONOTONIC);
     uint64_t last_process = read_clock(PROCESS_CPU_CLOCK);
     for (;;) {
@@ -96,6 +100,28 @@ void reporter() {
             line += std::format(" | cpu {:.1f} of 7 cores", (process - last_process) / 1e9 / seconds);
         last_process = process;
         LOG_INFO("{}", line);
+
+        // RT64's frame in parts, per frame drawn
+        uint64_t now_values[PS4_PERF_RT64_VALUE_COUNT];
+        for (int i = 0; i < PS4_PERF_RT64_VALUE_COUNT; i++)
+            now_values[i] = values[i].load();
+        const uint64_t frames = now_values[PS4_PERF_RT64_FRAMES] - last_values[PS4_PERF_RT64_FRAMES];
+        if (frames > 0) {
+            const char *part_names[PS4_PERF_RT64_PART_COUNT] = { "rsp", "setup", "record", "submit+wait" };
+            std::string rt64 = std::format("rt64: {:.1f} frames/s, {:.0f} draws and {:.1f} framebuffer pairs each |",
+                frames / seconds, double(now_values[PS4_PERF_RT64_DRAWS] - last_values[PS4_PERF_RT64_DRAWS]) / frames,
+                double(now_values[PS4_PERF_RT64_PAIRS] - last_values[PS4_PERF_RT64_PAIRS]) / frames);
+            for (int i = 0; i < PS4_PERF_RT64_PART_COUNT; i++) {
+                const uint64_t wall_ns = parts[i].wall_ns.load(), cpu_ns = parts[i].cpu_ns.load();
+                rt64 += std::format(" {} {:.1f} ms (cpu {:.1f})", part_names[i], (wall_ns - last_parts[i][0]) / 1e6 / frames, (cpu_ns - last_parts[i][1]) / 1e6 / frames);
+                last_parts[i][0] = wall_ns;
+                last_parts[i][1] = cpu_ns;
+            }
+            rt64 += std::format(" | gpu {:.1f} ms", (now_values[PS4_PERF_RT64_GPU_NS] - last_values[PS4_PERF_RT64_GPU_NS]) / 1e6 / frames);
+            LOG_INFO("{}", rt64);
+        }
+        for (int i = 0; i < PS4_PERF_RT64_VALUE_COUNT; i++)
+            last_values[i] = now_values[i];
     }
 }
 void watchdog() {
@@ -157,6 +183,26 @@ extern "C" void ps4_perf_end(int stage) {
 
 extern "C" void ps4_perf_shader_queue(int waiting) {
     shader_waiting.store(waiting, std::memory_order_relaxed);
+}
+
+extern "C" void ps4_perf_clock(uint64_t *wall, uint64_t *cpu) {
+    const bool on = enabled.load(std::memory_order_relaxed);
+    *wall = on ? read_clock(CLOCK_MONOTONIC) : 0;
+    *cpu = on ? read_clock(THREAD_CPU_CLOCK) : 0;
+}
+
+extern "C" void ps4_perf_part(int part, uint64_t wall, uint64_t cpu) {
+    if (part < 0 || part >= PS4_PERF_RT64_PART_COUNT || wall == 0)
+        return;
+    const uint64_t now_wall = read_clock(CLOCK_MONOTONIC), now_cpu = read_clock(THREAD_CPU_CLOCK);
+    parts[part].wall_ns.fetch_add(now_wall - wall, std::memory_order_relaxed);
+    if (now_cpu >= cpu)
+        parts[part].cpu_ns.fetch_add(now_cpu - cpu, std::memory_order_relaxed);
+}
+
+extern "C" void ps4_perf_value(int value, uint64_t amount) {
+    if (value >= 0 && value < PS4_PERF_RT64_VALUE_COUNT && enabled.load(std::memory_order_relaxed))
+        values[value].fetch_add(amount, std::memory_order_relaxed);
 }
 
 extern "C" int ps4_perf_enabled(void) {
