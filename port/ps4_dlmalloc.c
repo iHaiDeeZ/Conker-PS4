@@ -9,6 +9,11 @@
 #define ONLY_MSPACES 1
 #define MSPACES 1
 #define USE_LOCKS 1
+/* A mutex, not dlmalloc's x86 default spin lock: that spins and sched_yield()s, and the PS4's
+ * scheduler only yields to threads of the same or higher priority. A low-priority thread holding
+ * the lock (RT64's shader compilers, priority 767 on cores 4-6) then never runs again while the
+ * higher-priority threads spin for it: v00.09 and v00.10 froze that way (TOTK did too). */
+#define USE_SPIN_LOCKS 0
 #define HAVE_MMAP 0
 #define HAVE_MREMAP 0
 #define HAVE_MORECORE 0

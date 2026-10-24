@@ -7,6 +7,10 @@
 //         audio 30.0/s 1.2 ms | ui 59.8/s 3.3 ms | shaders 4 built, 812 ms each, 23 waiting | cpu 3.1 of 7 cores
 // "game" is the display lists the game sent (its own frame rate), the others are per item: wall
 // time (waits included) and the thread's CPU time within it.
+//
+// With it comes the freeze watchdog: when the VI tick or the game's frames stop for 10 s, every
+// thread's place and stack go to freeze.log, twice 3 s apart (spinning or stuck), once per freeze.
+// It allocates nothing and logs nothing (a freeze can be a lock the log or the heap needs).
 
 #include "ps4_platform.h"
 #include "ps4_log.h"
@@ -18,7 +22,11 @@
 #include <string>
 #include <thread>
 
+#include <cstdio>
+
 #include <time.h>
+
+extern "C" void ps4_dump_thread_stacks(const char *path, const char *reason); // port/ps4_sampler.cpp
 
 namespace {
 constexpr clockid_t THREAD_CPU_CLOCK = 14;  // FreeBSD CLOCK_THREAD_CPUTIME_ID
@@ -90,6 +98,41 @@ void reporter() {
         LOG_INFO("{}", line);
     }
 }
+void watchdog() {
+    ps4_thread_name("freeze watchdog");
+    char path[128], previous[128];
+    std::snprintf(path, sizeof(path), "%s/freeze.log", ps4_data_dir());
+    std::snprintf(previous, sizeof(previous), "%s/freeze.prev.log", ps4_data_dir());
+    std::rename(path, previous);
+    uint64_t last_vi = 0, last_frames = 0;
+    int vi_still = 0, frames_still = 0;
+    bool reported = false;
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (!enabled.load(std::memory_order_relaxed)) {
+            vi_still = frames_still = 0;
+            continue;
+        }
+        const uint64_t vi = stages[PS4_PERF_VI].count.load(), frames = stages[PS4_PERF_DISPLAY_LIST].count.load();
+        vi_still = vi == last_vi ? vi_still + 1 : 0;
+        frames_still = frames == last_frames ? frames_still + 1 : 0;
+        last_vi = vi;
+        last_frames = frames;
+        // the game's first frame comes after its intro's loading
+        const bool frozen = vi_still >= 10 || (frames != 0 && frames_still >= 10);
+        if (frozen && !reported) {
+            reported = true;
+            char reason[128];
+            std::snprintf(reason, sizeof(reason), "freeze: no VI tick for %d s, no game frame for %d s (first look)", vi_still, frames_still);
+            ps4_dump_thread_stacks(path, reason);
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            std::snprintf(reason, sizeof(reason), "freeze: second look, 3 s later");
+            ps4_dump_thread_stacks(path, reason);
+        } else if (!frozen) {
+            reported = false;
+        }
+    }
+}
 } // namespace
 
 extern "C" void ps4_perf_begin(int stage) {
@@ -122,6 +165,8 @@ extern "C" int ps4_perf_enabled(void) {
 
 extern "C" void ps4_perf_set_enabled(int on) {
     enabled.store(on != 0);
-    if (on && !reporter_started.exchange(true))
+    if (on && !reporter_started.exchange(true)) {
         std::thread(reporter).detach();
+        std::thread(watchdog).detach();
+    }
 }

@@ -5,10 +5,13 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.10 on the PS4 at 192.168.0.90, not yet tested there**. v00.09 runs at full speed (the
-game's 30 fps, 2-frame backtraces in 42 us) but froze after 85 s: the profiler's signal caught a game
-thread inside libkernel (0x800003710) while it held the heap's lock, and every thread that allocated
-then spun on it, the same stop as SMW's sampler. v00.10 has the profiler off by default.
+Status: **v00.11 on the PS4 at 192.168.0.90, not yet tested there**. Since v00.09 the game runs at
+its full 30 fps (2-frame backtraces in 42 us), but v00.09 froze after 85 s and v00.10 (profiler off)
+after 340 s. Both look like the freeze TOTK had: the heap's lock was dlmalloc's spin lock, which
+spins and yields, and the PS4 only yields to threads of the same or higher priority. When a
+low-priority thread holds it (RT64's shader compilers run at 767 on cores 4-6), the threads waiting
+for it keep it from ever running again (v00.09's profile: the renderer, VI and log threads all spinning
+in `mspace_malloc`). v00.11 makes the lock a mutex and adds the freeze watchdog (below).
 
 The slowness before v00.09: the save states' wait signature (a native backtrace at every game thread
 wait) stepped past the thread's first frame into system code, and libunwind then searched all 1.9 MB
@@ -45,11 +48,14 @@ line in `conker.log` with the game's frame rate, per-frame time of RT64's worklo
 threads, audio tasks, the UI, the VI tick (60 a second when the clock keeps up), shader compiles (and
 how many wait), and CPU use of the 7 cores.
 
+**Freeze watchdog** (with the Performance Log): when the VI tick or the game's frames stop for 10 s,
+every thread's place and the eboot addresses on its stack go to `freeze.log`, twice, 3 s apart (the
+previous run's is `freeze.prev.log`). It allocates and logs nothing, so a stuck heap or log can't stop it.
+
 **Profiler** (quick menu, off by default): `profile.log`, every 10 s, for each thread that ran: how
 often it was running and its busiest code. Running threads are looked at 50 times a second, waiting
-ones once a second, through the hang dump's signal. Only for short runs: like SMW's sampler, a signal
-landing at the wrong moment in libkernel (0x800003710) stops that thread for good (v00.09 froze after
-85 s with the game thread holding the heap's lock).
+ones once a second, through the hang dump's signal. A thread waiting in a system call that the
+signal restarts shows as "running" at the call (libkernel 0x800003710 in v00.09's profile).
 Symbolize `elf 0x...` lines with `llvm-symbolizer --obj=~/cbfd-build/oelf/vXX.YY.elf`.
 
 ## How it's built
