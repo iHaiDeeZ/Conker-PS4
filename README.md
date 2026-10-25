@@ -5,27 +5,30 @@ recompiled with N64Recomp, running on N64ModernRuntime and drawn by RT64) as an 
 PS4 consoles. The game's code runs natively on the PS4's CPU and RT64 renders with **Vulkan** on the
 PS4's GPU (Mesa's RADV on GNM, the same driver as HENkaku and G-Diffuser), presenting through VideoOut.
 
-Status: **v00.13 on the PS4 at 192.168.0.90, not yet tested there**. v00.11 ran without freezing
-(550 s+); gameplay holds 30 fps, but cutscenes drop to 10-17 fps with RT64's workload thread at
-70-100 ms of CPU per frame. v00.12 times the parts of RT64's frame (the `rt64:` line) to find which,
-and adds Controls to the quick menu; v00.13 opens the menu with L3 + R3 only (no touch pad).
+**Source only: bring your own ROM.** No game code, data or packages are published here. A package
+built from your ROM contains the game's recompiled code and the ROM itself, so it is for your own
+console only.
 
-Before: Since v00.09 the game runs at
-its full 30 fps (2-frame backtraces in 42 us), but v00.09 froze after 85 s and v00.10 (profiler off)
-after 340 s. Both look like the freeze TOTK had: the heap's lock was dlmalloc's spin lock, which
-spins and yields, and the PS4 only yields to threads of the same or higher priority. When a
-low-priority thread holds it (RT64's shader compilers run at 767 on cores 4-6), the threads waiting
-for it keep it from ever running again (v00.09's profile: the renderer, VI and log threads all spinning
-in `mspace_malloc`). v00.11 makes the lock a mutex and adds the freeze watchdog (below).
+Status: **v00.13, work in progress.** Gameplay holds the game's own 30 fps and runs for long
+sessions without freezing; rain scenes and some cutscenes drop to 6-17 fps (RT64's workload thread
+needs 70-100 ms of CPU per frame there). Mods (`.nrm`) are untested.
 
-The slowness before v00.09: the save states' wait signature (a native backtrace at every game thread
-wait) stepped past the thread's first frame into system code, and libunwind then searched all 1.9 MB
-of `.eh_frame` each time. v00.09 stops at the thread entry function itself (`ps4_thread_entry`, never
-tail-called) and logs a `backtrace check` at start.
+### Fixed along the way
+
+- Freezes after 85-340 s (v00.11): the heap's lock was dlmalloc's spin lock, which spins and yields,
+  and the PS4 only yields to threads of the same or higher priority. When a low-priority thread held
+  it (RT64's shader compilers run at 767 on cores 4-6), the threads waiting for it kept it from ever
+  running again. The lock is a mutex now, and a freeze watchdog (below) dumps every thread if it
+  happens again.
+- 0.4 fps (v00.09): the save states' wait signature (a native backtrace at every game thread wait)
+  stepped past the thread's first frame into system code, and libunwind then searched all 1.9 MB of
+  `.eh_frame` each time. Backtraces now stop at the thread entry function (`ps4_thread_entry`, never
+  tail-called).
 
 ## Using it
 
-1. Install `out/Conker-vXX.YY.pkg` (title ID `CBFD00064`) and start it.
+1. Build the package from your own US ROM ([How it's built](#how-its-built)), install
+   `out/Conker-vXX.YY.pkg` (title ID `CBFD00064`) on a jailbroken PS4 (GoldHEN) and start it.
 2. Pick **Start Game**. The launcher keeps RecompFrontend's **Controls**, **Settings** and **Mods**.
 
 The package contains the game code recompiled from your ROM and the ROM itself (`/app0/game`, the game
@@ -110,3 +113,8 @@ PS4 changes on top (revisions in `patches/BASE.txt`).
 ### Not yet
 
 - Mods (`.nrm`): the live recompiler's executable memory and patching the eboot's code are untested.
+
+## Credits
+
+See [CREDITS.md](CREDITS.md). The game is Rare's; this project is not affiliated with Rare, Nintendo
+or Microsoft.
